@@ -27,7 +27,7 @@
 | 申請權限 | 通過 Cloudflare 登入但不在名單裡的人，會看到申請頁（選角色、銀行、填原因），SA 核准時可以調整角色和銀行。 |
 | Cloudflare 同步 | 名單有變動就把啟用中的使用者同步到兩個 Access Group（全部使用者 / PG+SA），讓 Cloudflare 那層也擋住沒權限的人。 |
 
-還沒做的：一鍵部署、VM 內的閒置關機腳本、vSphere driver。
+還沒做的：vSphere driver。
 
 ## 使用者與帳號
 
@@ -56,6 +56,62 @@
 
 這兩個群組的 include 清單由 Portal 整個覆蓋，不要手動在 Cloudflare 改。同步失敗不會擋住 Portal 本身的修改，
 錯誤會顯示在使用者管理頁並記進稽核紀錄，修好後按「立即同步」即可。
+
+## 一鍵部署（Windows 筆電）
+
+在一台 Windows 10/11（Home 也可以，不需要 Hyper-V）上，從零架好整套環境：
+
+```powershell
+# 以系統管理員身分開 PowerShell，在 repo 根目錄：
+powershell -ExecutionPolicy Bypass -File .\deploy\deploy.ps1
+```
+
+第一次執行會把 `deploy\lab.config.example.psd1` 複製成 `deploy\lab.config.psd1`（不進 git），
+網域、VM 清單、記憶體大小都在裡面改。腳本分四段，每段都能重跑，已完成的部分會跳過：
+
+| 段落 | 做什麼 | 需要你手動的地方 |
+|---|---|---|
+| VMware | winget 裝 VMware Workstation Pro，確認 NAT（VMnet8）網段 | winget 下載不到時：登入 Broadcom 下載安裝檔 |
+| VMs | 下載 Windows Server 2022 評估版 ISO，每台 VM 無人值守安裝：固定 IP、開 RDP、建 `tester` 帳號、裝 VMware Tools、註冊閒置關機，最後拍 `clean` 快照 | ISO 自動下載失敗時：到 evalcenter 下載 |
+| Cloudflare | 用 API 建 tunnel 並裝成服務、VM 網段的私有路由、DNS、兩個 Access Group、Access Policy、Portal 的 Access 應用程式、RDP 目標、瀏覽器 RDP 應用程式 | 建 API token（腳本會列出要勾的權限）、第一次開 Zero Trust（取 team 名稱） |
+| Portal | 裝 Python 3.12、venv、產生 `C:\TestLab\portal.toml`、註冊「登入時啟動」的排程工作 | 無 |
+
+常用參數：
+
+```powershell
+.\deploy\deploy.ps1 -Stage Cloudflare     # 只重跑某一段：VMware / VMs / Cloudflare / Portal
+.\deploy\deploy.ps1 -SkipCloudflare       # 先不接 Cloudflare，Portal 用 dev 模式在 http://127.0.0.1:8080
+```
+
+部署完：
+
+- Portal：`https://lab.hackray.dev`（用你的 email 通過 Cloudflare Access 登入，你是第一位 SA）
+- 瀏覽器 RDP：Portal 分配後點「開啟遠端桌面」，或從 `https://<team>.cloudflareaccess.com` 的 App Launcher 進入。
+  Windows 帳號是 `tester`（或 `Administrator`），密碼在 `deploy\.state\secrets.json`（只有本人能讀，不進 git）。
+- client 和 server 分成兩個 RDP 應用程式：`lab-rdp.hackray.dev`（所有使用者）、`lab-rdp-srv.hackray.dev`（只有 PG / SA）。
+
+幾個設計上的決定：
+
+- **主機名稱用第一層子網域**（`lab.hackray.dev`、`lab-rdp.hackray.dev`），因為 Cloudflare 免費憑證只涵蓋 `*.hackray.dev`，
+  `portal.lab.hackray.dev` 這種兩層的需要付費的 Advanced Certificate。
+- **VM 全部用 Windows Server 2022 評估版**（桌面體驗），不需要 TPM；評估版 180 天到期，可以重建或用 `slmgr /rearm` 延長。
+- **VM 用 VMware NAT（VMnet8）網段**，固定 IP 用 `.10–.99`，cloudflared 在筆電上就能連到。
+- **Portal 用「登入時啟動」**：VMware Workstation 的 VM 屬於登入的使用者，vmrun 要用同一個帳號跑，所以筆電要保持登入（可設自動登入）。
+- 瀏覽器 RDP 的 Access 應用程式 Cloudflare 只有 dashboard 文件，腳本用 API 的 `rdp` 類型建立；
+  如果 API 拒絕，腳本會停下來列出 dashboard 的手動步驟，做完按 Enter 繼續。
+
+### VM 內的閒置關機
+
+`deploy/guest/idle-shutdown.ps1` 由 VM 內的工作排程器每 5 分鐘以 SYSTEM 執行：
+`quser` 沒有 Active 且閒置少於 30 分鐘的工作階段，而且 server 的 AP / SQL port 沒有外部連線，
+連續 30 分鐘就關機（剛開機的 30 分鐘內不會關）。Portal 發現 VM 關機後會自動結束分配。
+閒置時間在 `lab.config.psd1` 的 `IdleMinutes` 調整。
+
+### 部署腳本的測試
+
+`deploy/tests` 是 Pester 5 測試，CI 會在 Windows PowerShell 5.1 和 PowerShell 7 上跑：
+語法檢查、quser 解析、閒置判斷、無人值守 XML、portal.toml（再用 Python 讀回來驗證）、用 IMAPI2 建 ISO。
+真正的 VMware / Cloudflare 步驟需要在實機上跑。
 
 ## 本機開發（不需要 VM）
 
@@ -143,8 +199,7 @@ Portal 只聽 `127.0.0.1`，不要開防火牆讓外部直連。
 
 ### 在 Windows 上常駐
 
-PoC 可以先用工作排程器「開機時執行」`python -m portal --config C:\TestLab\portal.toml`，
-或用 NSSM 包成服務。一鍵部署之後再做。
+一鍵部署會註冊排程工作 `TestLab-Portal`（登入時啟動、掛掉自動重啟），log 在 `C:\TestLab\data\portal.log`。
 
 ## 專案結構
 
@@ -160,6 +215,12 @@ portal/
   drivers/         VMDriver 介面、MockDriver、VmrunDriver
   static/index.html
 tests/             pytest
+deploy/
+  deploy.ps1                 一鍵部署入口
+  lab.config.example.psd1    部署設定範例
+  lib/                       VMware、Cloudflare、Portal、共用模組
+  guest/                     VM 內執行：首次設定、閒置關機
+  tests/                     Pester 測試
 portal.example.toml
 ```
 
