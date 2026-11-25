@@ -42,6 +42,30 @@ CREATE TABLE IF NOT EXISTS audit (
     detail      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    email       TEXT PRIMARY KEY,
+    role        TEXT NOT NULL,
+    banks       TEXT NOT NULL,          -- JSON 陣列，"*" = 全部
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    updated_by  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS access_requests (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    banks       TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    status      TEXT NOT NULL,          -- pending | approved | rejected
+    created_at  TEXT NOT NULL,
+    decided_by  TEXT,
+    decided_at  TEXT,
+    decision_note TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL

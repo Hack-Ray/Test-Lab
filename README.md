@@ -22,9 +22,40 @@
 | 健康檢查 | 對 VM 的 `ports` 做 TCP 檢查（client 預設 3389；server 例如 3389 / AP / SQL）。client 會連同 server 一起檢查，全部通過才變成 `ready`，逾時（預設 10 分鐘）變成 `failed`。 |
 | 預暖機 | 每分鐘一次 reconcile：在設定時段內保持 N 台 client 開機待命，並受「同時開機上限」限制（保護筆電記憶體）。SA 可在 UI 改設定。 |
 | 紀錄 | 分配紀錄（哪台、誰、何時開始、何時結束）、延長紀錄、稽核紀錄（含被拒絕的嘗試）。 |
-| 自動結束分配 | VM 被 Windows 閒置排程關掉後，reconcile 會發現並把分配標成 released。 |
+| 自動結束分配 | VM 被 Windows 閒置排程關掉後，或開放時段結束（含延長）時，reconcile 會把分配標成 released。 |
+| 使用者管理 | SA 在網頁上新增使用者、改角色和銀行、停用或刪除，立即生效、不用重開，每次修改都進稽核紀錄。至少會保留一位啟用中的 SA。 |
+| 申請權限 | 通過 Cloudflare 登入但不在名單裡的人，會看到申請頁（選角色、銀行、填原因），SA 核准時可以調整角色和銀行。 |
+| Cloudflare 同步 | 名單有變動就把啟用中的使用者同步到兩個 Access Group（全部使用者 / PG+SA），讓 Cloudflare 那層也擋住沒權限的人。 |
 
-這次沒做的：閒置關機（之後放在 Windows 本機用工作排程器 + `quser`）、一鍵部署、vSphere driver。
+還沒做的：一鍵部署、VM 內的閒置關機腳本、vSphere driver。
+
+## 使用者與帳號
+
+- **登入身分**由 Cloudflare Access 負責（公司 Google / Microsoft 帳號，或 Access 的一次性驗證碼），Portal 不存密碼。
+- **角色與銀行權限**存在 Portal 的資料庫，由 SA 在「使用者管理」維護。
+  `portal.toml` 的 `[[users]]` 只是**初始名單**，資料庫還沒有任何使用者時匯入一次，之後改設定檔不會再生效。
+- 新人流程：新人用公司信箱通過 Access → Portal 顯示申請頁 → SA 核准 → Portal 同步到 Cloudflare Access Group。
+  也可以由 SA 直接新增。
+
+### 同步到 Cloudflare Access Group
+
+1. 在 Zero Trust → Access → Access Groups 建兩個群組，例如 `test-lab-users`、`test-lab-server`，
+   先隨便放一條 include（之後會被 Portal 覆蓋），記下兩個群組的 ID。
+2. Access 應用程式的 Policy：Portal 和 client RDP 用 `test-lab-users`，server RDP 用 `test-lab-server`。
+3. 建一個 API token，權限只要 **Account → Access: Organizations, Identity Providers, and Groups → Edit**，
+   放進 Portal 執行環境的環境變數 `CF_API_TOKEN`。
+4. 設定檔：
+
+   ```toml
+   [cloudflare_sync]
+   enabled = true
+   account_id = "<Cloudflare account ID>"
+   users_group_id = "<test-lab-users 的 ID>"
+   server_group_id = "<test-lab-server 的 ID>"
+   ```
+
+這兩個群組的 include 清單由 Portal 整個覆蓋，不要手動在 Cloudflare 改。同步失敗不會擋住 Portal 本身的修改，
+錯誤會顯示在使用者管理頁並記進稽核紀錄，修好後按「立即同步」即可。
 
 ## 本機開發（不需要 VM）
 
@@ -39,6 +70,7 @@ python -m portal
 打開 <http://127.0.0.1:8080>。預設是 `auth.mode = "dev"` 加 `driver.type = "mock"`：
 
 - 右上角下拉選單可以切換示範身分（PM / SE / PG / SA），API 則用 `X-Dev-User` header 或 `?as=email`。
+  想試申請流程，用 `?as=someone-new@example.com` 這種不在名單裡的 email 開頁面。
 - MockDriver 開機後 `mock_boot_seconds` 秒才算健康，用來模擬 Windows 開機。
 - 晚上或週末測試會被開放時段擋掉，可以暫時把 `portal.toml` 的 `close` 改晚、`weekdays` 加上 6、7。
 
@@ -121,8 +153,10 @@ portal/
   app.py           FastAPI 路由、背景迴圈（健康檢查 + reconcile）
   service.py       核心邏輯：權限、開放時段、分配、預暖機、紀錄
   auth.py          Cloudflare Access JWT 驗證 / dev 模式
-  config.py        讀 portal.toml（銀行、使用者、VM 以設定檔為準）
-  db.py            SQLite：分配、延長、稽核、可在 UI 改的設定
+  config.py        讀 portal.toml（銀行、VM 以設定檔為準；使用者只當初始名單）
+  users.py         使用者名單與權限申請
+  cloudflare.py    同步 Cloudflare Access Group
+  db.py            SQLite：使用者、申請、分配、延長、稽核、可在 UI 改的設定
   drivers/         VMDriver 介面、MockDriver、VmrunDriver
   static/index.html
 tests/             pytest
@@ -142,3 +176,10 @@ portal.example.toml
 | PUT | `/api/prewarm` | SA |
 | POST | `/api/reconcile` | SA（手動觸發一次） |
 | GET | `/api/audit` | SA |
+| GET | `/api/whoami` | 任何通過驗證的人（含未註冊）：自己的狀態與待審申請 |
+| POST | `/api/access-requests` `{role, banks, reason}` | 未註冊的人送申請 |
+| GET | `/api/access-requests[?status=pending]` | SA |
+| POST | `/api/access-requests/{id}/decision` `{approve, role?, banks?}` | SA |
+| GET / PUT | `/api/users` | SA |
+| DELETE | `/api/users/{email}` | SA |
+| GET / POST | `/api/cf-sync` | SA：查看 / 立即同步 Cloudflare |

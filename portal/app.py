@@ -32,6 +32,27 @@ class ExtendIn(BaseModel):
     reason: str
 
 
+class UserIn(BaseModel):
+    email: str
+    role: str
+    banks: list[str] = []
+    enabled: bool = True
+    note: str | None = None
+
+
+class AccessRequestIn(BaseModel):
+    role: str
+    banks: list[str]
+    reason: str
+
+
+class DecisionIn(BaseModel):
+    approve: bool
+    role: str | None = None
+    banks: list[str] | None = None
+    note: str | None = None
+
+
 class BackgroundLoop:
     """健康檢查（每 health_poll_seconds）和 reconcile（每 reconcile_seconds）。"""
 
@@ -66,6 +87,7 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
     db = db or DB(cfg.portal.get("db_path", "data/portal.db"))
     portal = Portal(cfg, driver, db, clock)
     auth = authenticator or Authenticator(cfg)
+    auth.lookup = portal.users.get  # 使用者名單以資料庫為準
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -124,8 +146,59 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
             "auth_mode": auth.mode, "driver": driver.name,
         }
         if auth.mode == "dev":
-            out["dev_users"] = [{"email": u.email, "role": u.role} for u in cfg.users.values()]
+            out["dev_users"] = [{"email": u["email"], "role": u["role"]}
+                                for u in portal.users.enabled_users()]
         return out
+
+    @app.get("/api/whoami")
+    def whoami(request: Request) -> dict[str, Any]:
+        """不需要在名單裡也能呼叫：給還沒有權限的人看自己的狀態、送申請。"""
+        email = auth.identify(request)
+        row = portal.users.row(email) if email else None
+        return {
+            "email": email,
+            "status": "active" if row and row["enabled"] else ("disabled" if row else "unregistered"),
+            "pending_request": portal.users.pending_for(email) if email else None,
+            "banks": [{"id": b.id, "name": b.name} for b in cfg.banks.values()],
+            "roles": ["PM", "SE", "PG", "SA"],
+            "auth_mode": auth.mode,
+        }
+
+    @app.post("/api/access-requests")
+    def request_access(body: AccessRequestIn, request: Request):
+        email = auth.identify(request)
+        row = portal.users.row(email)
+        if row and not row["enabled"]:
+            raise PortalError(403, "你的帳號已停用，請直接聯絡 SA")
+        return portal.users.request_access(email, body.role, body.banks, body.reason)
+
+    @app.get("/api/access-requests")
+    def list_requests(status: str | None = None, user: User = Depends(require("SA"))):
+        return portal.users.requests(status)
+
+    @app.post("/api/access-requests/{req_id}/decision")
+    def decide(req_id: int, body: DecisionIn, user: User = Depends(current_user)):
+        return portal.decide_request(user, req_id, body.approve, body.role, body.banks, body.note)
+
+    @app.get("/api/users")
+    def list_users(user: User = Depends(require("SA"))):
+        return portal.users.list()
+
+    @app.put("/api/users")
+    def save_user(body: UserIn, user: User = Depends(current_user)):
+        return portal.save_user(user, body.model_dump())
+
+    @app.delete("/api/users/{email}")
+    def delete_user(email: str, user: User = Depends(current_user)):
+        return portal.delete_user(user, email)
+
+    @app.get("/api/cf-sync")
+    def cf_sync_status(user: User = Depends(require("SA"))):
+        return portal.sync_status()
+
+    @app.post("/api/cf-sync")
+    def cf_sync_now(user: User = Depends(require("SA"))):
+        return portal.sync_access(user.email)
 
     @app.post("/api/wake")
     def wake(body: WakeIn, user: User = Depends(current_user)):

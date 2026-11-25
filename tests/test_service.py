@@ -161,3 +161,24 @@ def test_prewarm_settings_sa_only(portal):
         portal.update_prewarm(u(portal, "pg@example.com"), {"standby_clients": 2})
     s = portal.update_prewarm(u(portal, "sa@example.com"), {"standby_clients": 2})
     assert s["standby_clients"] == 2
+
+
+def test_after_hours_release(portal, clock):
+    a = portal.wake(u(portal, "pm@example.com"), "demo-a", "client")
+    clock.set(2026, 11, 25, 17, 0)
+    assert portal.reconcile()["after_hours_released"] == []
+    clock.set(2026, 11, 25, 17, 31)
+    r = portal.reconcile()
+    assert r["after_hours_released"] == [a["id"]]
+    assert portal.allocation(a["id"])["note"] == "after_hours"
+
+
+def test_extension_delays_after_hours_release(portal, clock):
+    clock.set(2026, 11, 25, 17, 0)
+    pg = u(portal, "pg@example.com")
+    a = portal.wake(pg, "demo-a", "client")
+    portal.extend_today(pg, "19:00", "加班驗證")
+    clock.set(2026, 11, 25, 18, 0)
+    assert portal.reconcile()["after_hours_released"] == []
+    clock.set(2026, 11, 25, 19, 0)
+    assert portal.reconcile()["after_hours_released"] == [a["id"]]

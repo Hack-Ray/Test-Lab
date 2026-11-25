@@ -18,6 +18,15 @@ dev_default_user = "sa@example.com"
 team_domain = "your-team.cloudflareaccess.com"
 audience = "填 Access 應用程式的 AUD tag"
 
+[cloudflare_sync]
+# 把啟用中的使用者同步到兩個 Cloudflare Access Group（群組要先在 Zero Trust 建好）
+# API token 放環境變數 CF_API_TOKEN，不要寫在這裡
+enabled = false
+account_id = ""
+users_group_id = ""     # 所有使用者：Portal、client RDP 的 Access 應用程式用
+server_group_id = ""    # PG / SA：server RDP 的 Access 應用程式用
+# api_token_env = "CF_API_TOKEN"
+
 [driver]
 type = "mock"                  # mock | vmrun
 mock_boot_seconds = 5
@@ -45,6 +54,7 @@ name = "示範銀行 A"
 id = "demo-b"
 name = "示範銀行 B"
 
+# 初始使用者名單：只在資料庫還沒有使用者時匯入一次，之後請用 Portal 的「使用者管理」維護
 # 角色：PM / SE 只能進 client；PG / SA 可進 client 和 server
 [[users]]
 email = "pm@example.com"

@@ -11,18 +11,14 @@ from datetime import datetime, time
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
+from .cloudflare import AccessGroupSync, SyncError
 from .config import Config, User, parse_hhmm
 from .db import DB
 from .drivers import DriverError, PowerState, VMDriver, VMSpec
+from .errors import PortalError
+from .users import UserStore
 
 ACTIVE = ("starting", "ready")
-
-
-class PortalError(Exception):
-    def __init__(self, status: int, message: str):
-        super().__init__(message)
-        self.status = status
-        self.message = message
 
 
 @dataclass
@@ -36,13 +32,18 @@ class OpenWindow:
 
 class Portal:
     def __init__(self, cfg: Config, driver: VMDriver, db: DB,
-                 clock: Callable[[], datetime] | None = None):
+                 clock: Callable[[], datetime] | None = None,
+                 access_sync: AccessGroupSync | None = None):
         self.cfg = cfg
         self.driver = driver
         self.db = db
         self.tz = ZoneInfo(cfg.portal.get("timezone", "Asia/Taipei"))
         self.clock = clock or (lambda: datetime.now(self.tz))
         self._alloc_lock = threading.RLock()
+        self.users = UserStore(cfg, db, lambda: self.now().isoformat(timespec="seconds"),
+                               self.audit)
+        self.users.seed_from_config()
+        self.access_sync = access_sync or AccessGroupSync(cfg.raw.get("cloudflare_sync", {}))
 
     # ------------------------------------------------------------ 共用
     def now(self) -> datetime:
@@ -115,6 +116,49 @@ class Portal:
 
     def extensions(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.db.query("SELECT * FROM extensions ORDER BY id DESC LIMIT ?", (limit,))
+
+    # ------------------------------------------------------------ 使用者管理（SA）
+    def _require_sa(self, user: User) -> None:
+        if user.role != "SA":
+            raise self.deny(user, 403, "只有 SA 可以管理使用者")
+
+    def save_user(self, actor: User, data: dict[str, Any]) -> dict[str, Any]:
+        self._require_sa(actor)
+        row = self.users.upsert(actor, data.get("email", ""), data.get("role", ""),
+                                data.get("banks") or [], bool(data.get("enabled", True)),
+                                data.get("note"))
+        return {"user": row, "sync": self.sync_access(actor.email)}
+
+    def delete_user(self, actor: User, email: str) -> dict[str, Any]:
+        self._require_sa(actor)
+        self.users.delete(actor, email)
+        return {"sync": self.sync_access(actor.email)}
+
+    def decide_request(self, actor: User, req_id: int, approve: bool,
+                       role: str | None = None, banks: list[str] | None = None,
+                       note: str | None = None) -> dict[str, Any]:
+        self._require_sa(actor)
+        req = self.users.decide(actor, req_id, approve, role, banks, note)
+        sync = self.sync_access(actor.email) if approve else {"skipped": True}
+        return {"request": req, "sync": sync}
+
+    def sync_access(self, actor: str | None) -> dict[str, Any]:
+        """把啟用中的使用者同步到 Cloudflare Access Group。失敗不影響 Portal 本身的修改。"""
+        if not self.access_sync.enabled:
+            return {"skipped": True}
+        at = self.now().isoformat(timespec="seconds")
+        try:
+            res = {"ok": True, **self.access_sync.sync(self.users.enabled_users()), "at": at}
+            self.audit(actor, "cf_sync", **res)
+        except SyncError as e:
+            res = {"ok": False, "error": str(e), "at": at}
+            self.audit(actor, "cf_sync_failed", error=str(e))
+        self.db.set_setting("cf_sync_last", res)
+        return res
+
+    def sync_status(self) -> dict[str, Any]:
+        return {"enabled": self.access_sync.enabled,
+                "last": self.db.get_setting("cf_sync_last")}
 
     # ------------------------------------------------------------ 預暖機設定
     def prewarm_settings(self) -> dict[str, Any]:
@@ -344,6 +388,15 @@ class Portal:
         if closed:
             self.audit(None, "auto_release", allocs=closed)
 
+        # 開放時段結束：把還在使用中的分配結束掉（VM 本身交給 Windows 閒置關機）
+        after_hours = []
+        if not self.open_window().is_open:
+            for a in self.active_allocations():
+                self._end_alloc(a["id"], "released", "after_hours")
+                after_hours.append(a["id"])
+            if after_hours:
+                self.audit(None, "after_hours_release", allocs=after_hours)
+
         started = []
         s = self.prewarm_settings()
         now = self.now()
@@ -371,4 +424,5 @@ class Portal:
                     started.append(c.name)
                     need -= 1
         self.process_pending()
-        return {"auto_released": closed, "prewarmed": started, "prewarm_window": in_window}
+        return {"auto_released": closed, "after_hours_released": after_hours,
+                "prewarmed": started, "prewarm_window": in_window}
