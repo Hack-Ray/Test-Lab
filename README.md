@@ -59,6 +59,8 @@
 
 ## 一鍵部署（Windows 筆電）
 
+> 第一次部署請照 [操作手冊](docs/operation-manual.md)：逐步說明、哪些要手動、server / client 初始化、疑難排解。
+
 在一台 Windows 10/11（Home 也可以，不需要 Hyper-V）上，從零架好整套環境：
 
 ```powershell
