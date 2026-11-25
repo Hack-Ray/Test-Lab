@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>測試環境 Portal</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2430; --muted:#6b7280; --line:#e5e7eb;
+          --accent:#2563eb; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Microsoft JhengHei", "PingFang TC", sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { display:flex; gap:12px; align-items:center; justify-content:space-between;
+           padding:12px 20px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:1000px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  select, input, button { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button.secondary { background:#fff; color:var(--fg); border-color:var(--line); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  .table-wrap { overflow-x:auto; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid currentColor; }
+  .s-ready, .s-running, .open { color:var(--ok); }
+  .s-starting { color:var(--warn); }
+  .s-failed, .closed { color:var(--bad); }
+  .s-released, .s-stopped { color:var(--muted); }
+  #msg { min-height:20px; }
+  .err { color:var(--bad); }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>測試環境 Portal</h1>
+  <div class="row">
+    <span id="who" class="muted"></span>
+    <select id="devUser" class="hidden" title="開發模式：切換身分"></select>
+  </div>
+</header>
+<main>
+  <section>
+    <h2>開放時段</h2>
+    <div id="window"></div>
+    <div id="extendBox" class="row hidden" style="margin-top:10px">
+      <span>延長今天到</span>
+      <input id="extUntil" type="time" value="19:00">
+      <input id="extReason" placeholder="原因（必填）" style="flex:1;min-width:180px">
+      <button id="extBtn" class="secondary">延長</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>喚醒測試環境</h2>
+    <div class="row">
+      <select id="bank"></select>
+      <select id="kind"><option value="client">Client</option></select>
+      <button id="wakeBtn">喚醒</button>
+    </div>
+    <div id="msg" class="muted" style="margin-top:8px"></div>
+  </section>
+
+  <section>
+    <h2>我的分配</h2>
+    <div class="table-wrap"><table id="mine"></table></div>
+  </section>
+
+  <section id="opsSection" class="hidden">
+    <h2>VM 狀態</h2>
+    <div class="table-wrap"><table id="vms"></table></div>
+    <h2 style="margin-top:16px">全部分配紀錄</h2>
+    <div class="table-wrap"><table id="allAllocs"></table></div>
+  </section>
+
+  <section id="saSection" class="hidden">
+    <h2>預暖機設定（SA）</h2>
+    <div class="row">
+      <label><input id="pwEnabled" type="checkbox"> 啟用</label>
+      <label>待命 client <input id="pwStandby" type="number" min="0" style="width:70px"></label>
+      <label>時段 <input id="pwStart" type="time"> – <input id="pwEnd" type="time"></label>
+      <label>開機上限 <input id="pwMax" type="number" min="1" style="width:70px"></label>
+      <button id="pwSave" class="secondary">儲存</button>
+      <button id="reconcileBtn" class="secondary">立即 reconcile</button>
+    </div>
+    <h2 style="margin-top:16px">稽核紀錄</h2>
+    <div class="table-wrap"><table id="audit"></table></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let me = null;
+const devUser = () => { try { return localStorage.getItem("devUser"); } catch { return null; } };
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  const du = devUser();
+  if (du && me?.auth_mode !== "cloudflare") headers["X-Dev-User"] = du;
+  const res = await fetch(path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.detail || res.statusText);
+  return data;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const pill = (s) => `<span class="pill s-${esc(s)}">${esc(s)}</span>`;
+const t = (iso) => iso ? iso.replace("T", " ").slice(0, 16) : "";
+const bankName = (id) => (me?.banks.find(b => b.id === id) || {}).name || id;
+
+function table(el, cols, rows) {
+  if (!rows.length) { el.innerHTML = `<tr><td class="muted">沒有資料</td></tr>`; return; }
+  el.innerHTML = `<tr>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr>` +
+    rows.map(r => `<tr>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("");
+}
+
+function allocActions(a) {
+  let h = "";
+  if (a.status === "ready" && a.rdp_url) h += `<a href="${esc(a.rdp_url)}" target="_blank" rel="noopener">開啟遠端桌面</a> `;
+  if (a.status === "starting" || a.status === "ready") h += `<button class="secondary" onclick="release(${a.id})">釋放</button>`;
+  if (a.status === "failed") h += `<span class="muted">${esc(a.note)}</span>`;
+  return h;
+}
+
+async function loadMe() {
+  me = await api("/api/me");
+  $("who").textContent = `${me.email}（${me.role}）`;
+  const w = me.window;
+  $("window").innerHTML = `<span class="pill ${w.is_open ? "open" : "closed"}">${w.is_open ? "開放中" : "未開放"}</span> ` +
+    `${esc(w.reason)} <span class="muted">平日 ${esc(w.open || "")}–${esc(w.close || "")}` +
+    `${w.extended_until ? `，今日延長到 ${esc(w.extended_until)}` : ""}</span>`;
+  $("extendBox").classList.toggle("hidden", !me.can_extend);
+  $("extUntil").max = w.extend_max_until;
+  $("bank").innerHTML = me.banks.map(b => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("");
+  $("kind").innerHTML = `<option value="client">Client</option>` + (me.can_server ? `<option value="server">Server</option>` : "");
+  $("wakeBtn").disabled = !w.is_open || !me.banks.length;
+  $("opsSection").classList.toggle("hidden", !me.can_server);
+  $("saSection").classList.toggle("hidden", !me.is_sa);
+  if (me.dev_users) {
+    const sel = $("devUser");
+    sel.classList.remove("hidden");
+    sel.innerHTML = me.dev_users.map(u => `<option value="${esc(u.email)}">${esc(u.email)}（${esc(u.role)}）</option>`).join("");
+    sel.value = me.email;
+  }
+}
+
+async function refresh() {
+  try {
+    const mine = await api("/api/allocations");
+    table($("mine"), [
+      ["#", a => a.id], ["銀行", a => esc(bankName(a.bank))], ["VM", a => esc(a.vm)],
+      ["狀態", a => pill(a.status)], ["開始", a => t(a.created_at)], ["", allocActions],
+    ], mine.slice(0, 20));
+    if (me.can_server) {
+      table($("vms"), [
+        ["VM", v => esc(v.name)], ["類型", v => v.kind], ["銀行", v => esc(v.bank ? bankName(v.bank) : "共用")],
+        ["電源", v => pill(v.power)], ["使用中", v => esc(v.users.join(", "))],
+      ], await api("/api/vms"));
+      table($("allAllocs"), [
+        ["#", a => a.id], ["誰", a => esc(a.email)], ["銀行", a => esc(bankName(a.bank))], ["VM", a => esc(a.vm)],
+        ["狀態", a => pill(a.status)], ["開始", a => t(a.created_at)], ["結束", a => t(a.ended_at)],
+      ], await api("/api/allocations?all=true"));
+    }
+    if (me.is_sa) {
+      table($("audit"), [
+        ["時間", r => t(r.ts)], ["誰", r => esc(r.email)], ["動作", r => esc(r.action)], ["內容", r => `<code>${esc(r.detail)}</code>`],
+      ], (await api("/api/audit")).slice(0, 50));
+    }
+  } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+
+async function loadPrewarm() {
+  if (!me.is_sa) return;
+  const p = await api("/api/prewarm");
+  $("pwEnabled").checked = p.enabled; $("pwStandby").value = p.standby_clients;
+  $("pwStart").value = p.start; $("pwEnd").value = p.end; $("pwMax").value = p.max_running;
+}
+
+$("wakeBtn").onclick = async () => {
+  $("msg").textContent = "喚醒中…（VM 沒開機的話要等開機與健康檢查）";
+  try {
+    const a = await api("/api/wake", { method: "POST", body: JSON.stringify({ bank: $("bank").value, kind: $("kind").value }) });
+    $("msg").textContent = `已分配 ${a.vm}，狀態 ${a.status}`;
+  } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  refresh();
+};
+window.release = async (id) => {
+  try { await api(`/api/allocations/${id}/release`, { method: "POST" }); } catch (e) { alert(e.message); }
+  refresh();
+};
+$("extBtn").onclick = async () => {
+  try {
+    const r = await api("/api/extend", { method: "POST", body: JSON.stringify({ until: $("extUntil").value, reason: $("extReason").value }) });
+    $("msg").textContent = `今天已延長到 ${r.until}`;
+    $("extReason").value = "";
+    await loadMe();
+  } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$("pwSave").onclick = async () => {
+  try {
+    await api("/api/prewarm", { method: "PUT", body: JSON.stringify({
+      enabled: $("pwEnabled").checked, standby_clients: +$("pwStandby").value,
+      start: $("pwStart").value, end: $("pwEnd").value, max_running: +$("pwMax").value }) });
+    $("msg").textContent = "預暖機設定已儲存";
+  } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+$("reconcileBtn").onclick = async () => {
+  const r = await api("/api/reconcile", { method: "POST" });
+  $("msg").textContent = `reconcile：預暖機 ${r.prewarmed.length} 台、自動釋放 ${r.auto_released.length} 筆`;
+  refresh();
+};
+$("devUser").onchange = async (e) => {
+  try { localStorage.setItem("devUser", e.target.value); } catch {}
+  await loadMe(); await loadPrewarm(); refresh();
+};
+
+(async () => {
+  try { await loadMe(); await loadPrewarm(); await refresh(); }
+  catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

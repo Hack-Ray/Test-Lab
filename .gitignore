@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+portal.toml
+.pytest_cache/
