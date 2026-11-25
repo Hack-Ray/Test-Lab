@@ -51,13 +51,17 @@ class AccessGroupSync:
         }
         self._transport = transport
         self.token_env = cfg.get("api_token_env", "CF_API_TOKEN")
+        self.token_file = cfg.get("api_token_file", "")  # 一鍵部署會把 token 放在只有本人能讀的檔案
 
     def _call(self) -> Transport:
         if self._transport:
             return self._transport
         token = os.environ.get(self.token_env, "")
+        if not token and self.token_file and os.path.exists(self.token_file):
+            with open(self.token_file, encoding="utf-8-sig") as f:
+                token = f.read().strip()
         if not token:
-            raise SyncError(f"沒有設定環境變數 {self.token_env}（Cloudflare API token）")
+            raise SyncError(f"沒有 Cloudflare API token（環境變數 {self.token_env} 或 api_token_file）")
         return _urllib_transport(token)
 
     def check_config(self) -> None:

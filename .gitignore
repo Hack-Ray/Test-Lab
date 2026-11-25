@@ -4,3 +4,5 @@ __pycache__/
 data/
 portal.toml
 .pytest_cache/
+deploy/.state/
+deploy/lab.config.psd1
