@@ -1,0 +1,98 @@
+# Portal 設定範例。複製成 portal.toml 再改（portal.toml 不進 git）。
+# 銀行、帳號、VM 全部是示範資料。
+
+[portal]
+timezone = "Asia/Taipei"
+db_path = "data/portal.db"
+host = "127.0.0.1"   # 跟 cloudflared 放同一台，只聽 localhost 即可
+port = 8080
+health_timeout_seconds = 600   # 喚醒後等健康檢查的上限
+health_poll_seconds = 5
+reconcile_seconds = 60         # 預暖機 / 狀態同步迴圈間隔
+
+[auth]
+# mode = "dev"：本機開發，不驗證 JWT，用 X-Dev-User header 或 ?as= 切換身分
+# mode = "cloudflare"：驗證 Cf-Access-Jwt-Assertion
+mode = "dev"
+dev_default_user = "sa@example.com"
+team_domain = "your-team.cloudflareaccess.com"
+audience = "填 Access 應用程式的 AUD tag"
+
+[driver]
+type = "mock"                  # mock | vmrun
+mock_boot_seconds = 5
+# vmrun_path = 'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe'
+
+[schedule]
+weekdays = [1, 2, 3, 4, 5]     # 1=週一 … 7=週日
+open = "08:00"
+close = "17:30"
+extend_roles = ["PG", "SA"]
+extend_max_until = "22:00"     # 延長的上限（當天）
+
+[prewarm]                      # 預設值；之後可在 UI 由 SA 修改（存在 DB）
+enabled = true
+standby_clients = 1            # 開放時段內保持幾台 client 已開機待命
+start = "07:45"
+end = "16:30"
+max_running = 4                # 全部 VM（含 server）同時開機上限，保護筆電記憶體
+
+[[banks]]
+id = "demo-a"
+name = "示範銀行 A"
+
+[[banks]]
+id = "demo-b"
+name = "示範銀行 B"
+
+# 角色：PM / SE 只能進 client；PG / SA 可進 client 和 server
+[[users]]
+email = "pm@example.com"
+role = "PM"
+banks = ["demo-a"]
+
+[[users]]
+email = "se@example.com"
+role = "SE"
+banks = ["demo-a", "demo-b"]
+
+[[users]]
+email = "pg@example.com"
+role = "PG"
+banks = ["demo-a", "demo-b"]
+
+[[users]]
+email = "sa@example.com"
+role = "SA"
+banks = ["*"]                  # * = 全部銀行
+
+# 每家銀行一台 server；client 一人一台（bank 不填 = 共用池）
+[[vms]]
+name = "srv-demo-a"
+kind = "server"
+bank = "demo-a"
+vmx = 'D:\VMs\srv-demo-a\srv-demo-a.vmx'
+ports = [3389, 8080, 1433]     # RDP / AP / SQL
+rdp_url = "https://srv-demo-a.example.com"
+
+[[vms]]
+name = "srv-demo-b"
+kind = "server"
+bank = "demo-b"
+vmx = 'D:\VMs\srv-demo-b\srv-demo-b.vmx'
+ports = [3389, 8080, 1433]
+rdp_url = "https://srv-demo-b.example.com"
+
+[[vms]]
+name = "cli-01"
+kind = "client"
+vmx = 'D:\VMs\cli-01\cli-01.vmx'
+ports = [3389]
+rdp_url = "https://cli-01.example.com"
+
+[[vms]]
+name = "cli-02"
+kind = "client"
+vmx = 'D:\VMs\cli-02\cli-02.vmx'
+ports = [3389]
+rdp_url = "https://cli-02.example.com"
