@@ -32,7 +32,8 @@
   .s-released, .s-stopped { color:var(--muted); }
   #msg { min-height:20px; }
   .err { color:var(--bad); }
-  .hidden { display:none; }
+  .hidden { display:none !important; }
+  label.chk { display:inline-flex; gap:4px; align-items:center; font-size:14px; }
 </style>
 </head>
 <body>
@@ -44,6 +45,23 @@
   </div>
 </header>
 <main>
+  <section id="requestSection" class="hidden">
+    <h2>申請使用權限</h2>
+    <p id="reqStatus" class="muted"></p>
+    <div id="reqForm" class="hidden">
+      <div class="row">
+        <label>角色 <select id="reqRole"></select></label>
+        <span>銀行</span><span id="reqBanks" class="row"></span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="reqReason" placeholder="申請原因（必填，例如：負責示範銀行 A 的測試）" style="flex:1;min-width:240px">
+        <button id="reqBtn">送出申請</button>
+      </div>
+    </div>
+    <div id="reqMsg" class="muted" style="margin-top:8px"></div>
+  </section>
+
+  <div id="appBody" class="hidden" style="display:contents">
   <section>
     <h2>開放時段</h2>
     <div id="window"></div>
@@ -90,11 +108,29 @@
     <h2 style="margin-top:16px">稽核紀錄</h2>
     <div class="table-wrap"><table id="audit"></table></div>
   </section>
+
+  <section id="usersSection" class="hidden">
+    <h2>待審核的權限申請（SA）</h2>
+    <div class="table-wrap"><table id="requests"></table></div>
+
+    <h2 style="margin-top:16px">使用者管理（SA）</h2>
+    <div id="cfSync" class="row muted" style="margin-bottom:8px"></div>
+    <div class="table-wrap"><table id="users"></table></div>
+    <h2 style="margin-top:16px">新增使用者</h2>
+    <div class="row">
+      <input id="nuEmail" placeholder="email" style="min-width:220px">
+      <select id="nuRole"></select>
+      <span id="nuBanks" class="row"></span>
+      <button id="nuBtn" class="secondary">新增</button>
+    </div>
+  </section>
+  </div>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
 let me = null;
-const devUser = () => { try { return localStorage.getItem("devUser"); } catch { return null; } };
+const asParam = new URLSearchParams(location.search).get("as");
+const devUser = () => { if (asParam) return asParam; try { return localStorage.getItem("devUser"); } catch { return null; } };
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -138,6 +174,9 @@ async function loadMe() {
   $("wakeBtn").disabled = !w.is_open || !me.banks.length;
   $("opsSection").classList.toggle("hidden", !me.can_server);
   $("saSection").classList.toggle("hidden", !me.is_sa);
+  $("usersSection").classList.toggle("hidden", !me.is_sa);
+  $("nuRole").innerHTML = ROLES.map(r => `<option>${r}</option>`).join("");
+  $("nuBanks").innerHTML = bankChecks("nu", []);
   if (me.dev_users) {
     const sel = $("devUser");
     sel.classList.remove("hidden");
@@ -170,6 +209,96 @@ async function refresh() {
     }
   } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
+
+const ROLES = ["PM", "SE", "PG", "SA"];
+let allBanks = [];
+const roleSelect = (id, v) => `<select id="${id}">${ROLES.map(r => `<option ${r === v ? "selected" : ""}>${r}</option>`).join("")}</select>`;
+const bankChecks = (prefix, chosen, withAll = true) =>
+  (withAll ? [{ id: "*", name: "全部" }] : []).concat(allBanks).map(b =>
+    `<label class="chk"><input type="checkbox" data-g="${prefix}" value="${esc(b.id)}" ${chosen.includes(b.id) ? "checked" : ""}>${esc(b.name)}</label>`).join(" ");
+const checked = (prefix) => [...document.querySelectorAll(`input[data-g="${prefix}"]:checked`)].map(i => i.value);
+const slug = (email) => email.replace(/[^a-z0-9]/gi, "_");
+
+function syncText(r) {
+  if (!r || r.skipped) return "";
+  return r.ok ? `已同步 Cloudflare（${r.users} 人 / server ${r.server} 人）` : `Cloudflare 同步失敗：${r.error}`;
+}
+
+async function loadUsers() {
+  if (!me.is_sa) return;
+  const [users, reqs, sync] = await Promise.all([api("/api/users"), api("/api/access-requests?status=pending"), api("/api/cf-sync")]);
+  $("cfSync").innerHTML = sync.enabled
+    ? `<span>Cloudflare Access 同步：${esc(sync.last ? syncText(sync.last) + "，" + t(sync.last.at) : "尚未同步")}</span> <button class="secondary" onclick="syncNow()">立即同步</button>`
+    : `<span>Cloudflare Access 同步未啟用（設定檔 [cloudflare_sync]）</span>`;
+  table($("users"), [
+    ["email", u => esc(u.email)],
+    ["角色", u => roleSelect(`r_${slug(u.email)}`, u.role)],
+    ["銀行", u => bankChecks(`b_${slug(u.email)}`, u.banks)],
+    ["啟用", u => `<input type="checkbox" id="e_${slug(u.email)}" ${u.enabled ? "checked" : ""}>`],
+    ["", u => `<button class="secondary" onclick='saveUser(${JSON.stringify(u.email)})'>儲存</button> <button class="secondary" onclick='deleteUser(${JSON.stringify(u.email)})'>刪除</button>`],
+  ], users);
+  table($("requests"), [
+    ["#", r => r.id], ["email", r => esc(r.email)], ["申請時間", r => t(r.created_at)],
+    ["角色", r => roleSelect(`qr_${r.id}`, r.role)],
+    ["銀行", r => bankChecks(`qb_${r.id}`, r.banks)],
+    ["原因", r => esc(r.reason)],
+    ["", r => `<button onclick="decide(${r.id}, true)">核准</button> <button class="secondary" onclick="decide(${r.id}, false)">拒絕</button>`],
+  ], reqs);
+}
+
+async function withMsg(fn) {
+  try { const r = await fn(); $("msg").textContent = r || "完成"; }
+  catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  loadUsers();
+}
+window.saveUser = (email) => withMsg(async () => {
+  const s = slug(email);
+  const r = await api("/api/users", { method: "PUT", body: JSON.stringify({
+    email, role: $(`r_${s}`).value, banks: checked(`b_${s}`), enabled: $(`e_${s}`).checked }) });
+  return `已儲存 ${email}。${syncText(r.sync)}`;
+});
+window.deleteUser = (email) => withMsg(async () => {
+  if (!confirm(`確定刪除 ${email}？（只想暫停可以取消「啟用」）`)) return "已取消";
+  const r = await api(`/api/users/${encodeURIComponent(email)}`, { method: "DELETE" });
+  return `已刪除 ${email}。${syncText(r.sync)}`;
+});
+window.decide = (id, approve) => withMsg(async () => {
+  const r = await api(`/api/access-requests/${id}/decision`, { method: "POST", body: JSON.stringify({
+    approve, role: $(`qr_${id}`).value, banks: checked(`qb_${id}`) }) });
+  return `申請 #${id} 已${approve ? "核准" : "拒絕"}。${syncText(r.sync)}`;
+});
+window.syncNow = () => withMsg(async () => syncText(await api("/api/cf-sync", { method: "POST" })) || "同步未啟用");
+$("nuBtn").onclick = () => withMsg(async () => {
+  const email = $("nuEmail").value.trim();
+  const r = await api("/api/users", { method: "PUT", body: JSON.stringify({
+    email, role: $("nuRole").value, banks: checked("nu"), enabled: true }) });
+  $("nuEmail").value = "";
+  return `已新增 ${email}。${syncText(r.sync)}`;
+});
+
+async function showRequestPage(w) {
+  $("requestSection").classList.remove("hidden");
+  $("appBody").classList.add("hidden");
+  $("who").textContent = w.email || "";
+  if (w.status === "disabled") { $("reqStatus").textContent = "你的帳號已停用，請聯絡 SA。"; return; }
+  if (w.pending_request) {
+    const p = w.pending_request;
+    $("reqStatus").textContent = `你的申請（${p.role}，${p.banks.map(id => (allBanks.find(b => b.id === id) || {}).name || id).join("、")}）已在 ${t(p.created_at)} 送出，等待 SA 審核。`;
+    $("reqForm").classList.add("hidden");
+    return;
+  }
+  $("reqStatus").textContent = `${w.email} 還沒有使用權限，請送出申請，SA 核准後就能使用。`;
+  $("reqForm").classList.remove("hidden");
+  $("reqRole").innerHTML = ["PM", "SE", "PG"].map(r => `<option>${r}</option>`).join("");
+  $("reqBanks").innerHTML = bankChecks("req", [], false);
+}
+$("reqBtn").onclick = async () => {
+  try {
+    await api("/api/access-requests", { method: "POST", body: JSON.stringify({
+      role: $("reqRole").value, banks: checked("req"), reason: $("reqReason").value }) });
+    await showRequestPage(await api("/api/whoami"));
+  } catch (e) { $("reqMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
 
 async function loadPrewarm() {
   if (!me.is_sa) return;
@@ -213,14 +342,23 @@ $("reconcileBtn").onclick = async () => {
 };
 $("devUser").onchange = async (e) => {
   try { localStorage.setItem("devUser", e.target.value); } catch {}
-  await loadMe(); await loadPrewarm(); refresh();
+  if (asParam) { location.search = ""; return; }
+  start();
 };
 
-(async () => {
-  try { await loadMe(); await loadPrewarm(); await refresh(); }
-  catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  setInterval(refresh, 5000);
-})();
+let timer = null;
+async function start() {
+  try {
+    const w = await api("/api/whoami");
+    allBanks = w.banks;
+    if (w.status !== "active") { await showRequestPage(w); return; }
+    $("requestSection").classList.add("hidden");
+    $("appBody").classList.remove("hidden");
+    await loadMe(); await loadPrewarm(); await loadUsers(); await refresh();
+    if (!timer) timer = setInterval(refresh, 5000);
+  } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+start();
 </script>
 </body>
 </html>

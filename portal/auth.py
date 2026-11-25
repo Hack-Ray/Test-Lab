@@ -15,15 +15,18 @@ import jwt
 from fastapi import Request
 
 from .config import Config, User
-from .service import PortalError
+from .errors import PortalError
 
 JWT_HEADER = "Cf-Access-Jwt-Assertion"
 JWT_COOKIE = "CF_Authorization"
 
 
 class Authenticator:
-    def __init__(self, cfg: Config, key_resolver: Callable[[str], Any] | None = None):
+    def __init__(self, cfg: Config, key_resolver: Callable[[str], Any] | None = None,
+                 lookup: Callable[[str], User | None] | None = None):
         self.cfg = cfg
+        # 預設查設定檔；create_app 會換成查資料庫
+        self.lookup = lookup or (lambda email: cfg.users.get(email))
         self.mode = cfg.auth.get("mode", "dev")
         if self.mode not in ("dev", "cloudflare"):
             raise ValueError("auth.mode 必須是 dev 或 cloudflare")
@@ -75,7 +78,7 @@ class Authenticator:
 
     def user(self, request: Request) -> User:
         email = self.identify(request)
-        user = self.cfg.users.get(email)
+        user = self.lookup(email)
         if user is None:
-            raise PortalError(403, f"{email or '（未知）'} 不在權限表裡")
+            raise PortalError(403, f"{email or '（未知）'} 不在權限表裡或已停用")
         return user
