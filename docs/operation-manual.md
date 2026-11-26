@@ -271,6 +271,8 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 |---|---|
 | 執行 deploy.ps1 出現「無法載入，因為這個系統上已停用指令碼執行」 | 指令要包含 `-ExecutionPolicy Bypass`，照第 4 節的指令執行 |
 | 中文變亂碼 | 用 Windows 內建 PowerShell 執行即可；如果是自己改過的 `.psd1`，存檔時編碼選「UTF-8 with BOM」 |
+| `vmrun start … 失敗：Error: The operation was canceled` | VMware 在等人回答視窗。先從開始選單打開一次 VMware Workstation，按掉第一次的授權視窗（個人使用）；再 File → Open 那台 VM 的 `.vmx` → Power on，看跳出什麼訊息並處理，關掉 VM 後重跑 deploy.ps1 |
+| VMware 跳出 `No PCIe slot available for SCSI0` | 舊版腳本產生的 vmx 少了 PCIe 橋接設定。更新到新版後，在 VMware 關掉那台 VM 的分頁，重跑 deploy.ps1（會重新產生 vmx） |
 | 「找不到 VMware NAT 網卡（VMnet8）」 | 開 VMware → Edit → Virtual Network Editor → Change Settings → 確認 VMnet8 是 NAT，遮罩 255.255.255.0 |
 | VM 安裝超過 90 分鐘沒完成 | 在 VMware 打開那台 VM 看畫面。常見：ISO 檔不完整（刪掉重下載）、`ImageIndex` 選到 Core 版（要用 2 或 4）。處理後刪掉 `C:\TestLab\VMs\<名稱>` 資料夾再重跑 |
 | Cloudflare「token 無效」 | token 複製不完整或權限不夠，照 4.3 重建 |

@@ -108,7 +108,23 @@ Describe '無人值守安裝檔' {
         $vmx = New-LabVmx -Vm $vm -DiskFile 'cli-01.vmdk' -WindowsIso 'C:\iso\w.iso' -SetupIso 'C:\vm\setup.iso' -ToolsIso 'C:\vmw\windows.iso'
         $vmx | Should -Match 'firmware = "bios"'
         $vmx | Should -Match 'ethernet0.connectionType = "nat"'
+        $vmx | Should -Match 'pciBridge4.virtualDev = "pcieRootPort"'
+        $vmx | Should -Match 'pciBridge7.functions = "8"'
+        $vmx | Should -Match 'floppy0.present = "FALSE"'
         $vmx | Should -Match 'sata0:2.fileName = "C:\\vm\\setup.iso"'
+    }
+
+    It '沒有 Tools 光碟時不掛 sata0:3' {
+        $vm = @{ Name = 'cli-01'; MemoryMB = 4096; Cpus = 2 }
+        $vmx = New-LabVmx -Vm $vm -DiskFile 'd.vmdk' -WindowsIso 'w' -SetupIso 's' -ToolsIso $null
+        $vmx | Should -Not -Match 'sata0:3'
+        $vmx | Should -Match 'sata0:2.fileName = "s"'
+    }
+
+    It 'Tools 光碟已存在就直接用' {
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) 'labtools.iso'
+        Set-Content $tmp 'x'
+        Get-LabToolsIso ([pscustomobject]@{ ToolsIso = $tmp }) 'C:\nowhere' | Should -Be $tmp
     }
 
     It '安裝完拿掉光碟' {
