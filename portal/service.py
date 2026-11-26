@@ -319,6 +319,22 @@ class Portal:
             a["server"] = srv.name if srv else None
         return a
 
+    def rdp_credentials(self) -> dict[str, str] | None:
+        """VM 共用測試帳號。密碼每次從 secrets 檔讀（主機上改密碼後不用重啟 Portal）。"""
+        rdp = self.cfg.raw.get("rdp", {})
+        user = rdp.get("username")
+        if not user:
+            return None
+        password = rdp.get("password", "")
+        path = rdp.get("secrets_file")
+        if path:
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    password = json.load(f).get(rdp.get("secrets_key", "TesterPassword"), password)
+            except (OSError, ValueError):
+                pass
+        return {"username": user, "password": password}
+
     def _end_alloc(self, alloc_id: int, status: str, note: str) -> None:
         self.db.execute(
             "UPDATE allocations SET status=?, ended_at=?, note=? WHERE id=?",

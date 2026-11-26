@@ -150,6 +150,13 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
                                 for u in portal.users.enabled_users()]
         return out
 
+    @app.get("/api/rdp-credentials")
+    def rdp_credentials(user: User = Depends(current_user)) -> dict[str, Any]:
+        c = portal.rdp_credentials()
+        if c is None:
+            raise PortalError(404, "沒有設定 VM 測試帳號")
+        return c
+
     @app.get("/api/whoami")
     def whoami(request: Request) -> dict[str, Any]:
         """不需要在名單裡也能呼叫：給還沒有權限的人看自己的狀態、送申請。"""

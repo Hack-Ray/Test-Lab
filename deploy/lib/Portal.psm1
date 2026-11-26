@@ -67,6 +67,12 @@ function New-LabPortalToml {
         $L.Add('api_token_file = ' + (ConvertTo-TomlString $TokenFile))
     } else { $L.Add('enabled = false') }
     $L.Add('')
+    $L.Add('# 遠端桌面共用測試帳號：Portal 顯示帳號、幫使用者複製密碼（密碼每次從 secrets.json 讀）')
+    $L.Add('[rdp]')
+    $L.Add('username = ' + (ConvertTo-TomlString $Config.TesterUser))
+    $L.Add('secrets_file = ' + (ConvertTo-TomlString (Join-Path (Split-Path -Parent $PSScriptRoot) '.state\secrets.json')))
+    $L.Add('secrets_key = "TesterPassword"')
+    $L.Add('')
     $L.Add('[driver]')
     $L.Add('type = "vmrun"')
     $L.Add('vmrun_path = ' + (ConvertTo-TomlString $VmrunPath))
