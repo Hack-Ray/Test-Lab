@@ -61,7 +61,8 @@ foreach ($vm in $Config.VMs) {
     if (Invoke-LabGuestPs $VMware $s.Vmx $Config.TesterUser $Secrets.TesterPassword $userScript 300) { Write-Ok "$($Config.TesterUser) 已加上注音" }
     else { Write-Note "$($Config.TesterUser) 的輸入法沒設成功（帳號可能還沒登入過），之後在 VM 裡 Settings → Language 加中文(台灣)" }
     if (-not $NoRestart) {
-        & $VMware.Vmrun -T ws -gu Administrator -gp $Secrets.AdminPassword runProgramInGuest $s.Vmx -noWait 'C:\Windows\System32\shutdown.exe' '/r /t 5 /d p:0:0' 2>&1 | Out-Null
+        # 參數要一個一個分開給，包成一個字串 VM 裡的程式收不到
+        & $VMware.Vmrun -T ws -gu Administrator -gp $Secrets.AdminPassword runProgramInGuest $s.Vmx -noWait 'C:\Windows\System32\shutdown.exe' /r /t 5 /d p:0:0 2>&1 | Out-Null
         Write-Ok '重開機中（約 1–2 分鐘）'
     }
 }
