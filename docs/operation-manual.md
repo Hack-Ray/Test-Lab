@@ -270,7 +270,7 @@ SA 在 Portal 下方「新增主機」填名稱（例如 `cli-03`）、類型、
 - 範本 VM 裡要有 VMware Tools（腳本靠它在 VM 裡改 IP）
 - linked clone 依賴範本的快照：**不要刪掉範本 VM 或它的 `clean` 快照**
 - 新增的主機記在 `C:\TestLab\data\extra.json`，重跑 deploy.ps1 會一起保留
-- 複製出來的 VM 是範本 `clean` 快照當下的狀態。想讓新主機直接帶著 AP / SQL：在範本裝好後拍一個新名稱的快照（例如 `with-ap`），再把 `deploy\lib` 產生的 `C:\TestLab\portal.toml` 裡 `[provision] snapshot` 改成它（重跑部署會改回 `clean`）
+- 複製出來的 VM 是範本 `clean` 快照當下的狀態。想讓新主機直接帶著 AP / SQL：在範本裝好後拍一個新名稱的快照（例如 `with-ap`），再把 `C:\TestLab\portal.toml` 裡 `[provision] snapshot` 改成它（重跑部署會改回 `clean`）
 
 ### 8.2 用設定檔新增
 
