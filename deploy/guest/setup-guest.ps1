@@ -35,6 +35,12 @@ $ts = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
 New-Item -Path $ts -Force | Out-Null
 Set-ItemProperty $ts -Name MaxDisconnectionTime -Value (8 * 3600 * 1000)
 
+# ---- 關掉 Shutdown Event Tracker（測試機常被直接關電源，不要每次登入都問關機原因） ----
+$rel = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
+New-Item -Path $rel -Force | Out-Null
+Set-ItemProperty $rel -Name ShutdownReasonOn -Value 0 -Type DWord
+Set-ItemProperty $rel -Name ShutdownReasonUI -Value 0 -Type DWord
+
 # ---- 其他要開的 port（server 的 AP / SQL） -----------------------------------
 $extra = @($cfg.Ports | Where-Object { $_ -ne 3389 })
 if ($extra.Count -gt 0) {
