@@ -92,11 +92,21 @@ function Get-LabToolsIso($VMware, [string]$IsoDir) {
             ForEach-Object Value | Sort-Object -Unique | Select-Object -Last 1)
         if (-not $name) { throw '找不到 ISO 檔名' }
         New-Item -ItemType Directory -Path $IsoDir -Force | Out-Null
-        Start-BitsTransfer -Source ($base + $name) -Destination $cached -ErrorAction Stop
+        try { Start-BitsTransfer -Source ($base + $name) -Destination $cached -ErrorAction Stop }
+        catch { Invoke-WebRequest -Uri ($base + $name) -OutFile $cached -UseBasicParsing }
         Write-Ok "VMware Tools：$cached"
         return $cached
     } catch {
-        Write-Note "下載 VMware Tools 失敗（$_），先不裝 Tools，VM 照樣會建好"
+        # 沒有 Tools 的話：一次性密碼、主機端改密碼、網頁新增主機都不能用，所以請使用者手動補上
+        Write-Note "下載 VMware Tools 失敗：$_"
+        Wait-LabUser -Title '手動下載 VMware Tools 光碟' -Steps @(
+            "用瀏覽器開 $base",
+            '下載 VMware-tools-windows-<版本>.iso',
+            "存成 $cached",
+            '完成後回到這個視窗按 Enter（不想裝就直接按 Enter，VM 照樣會建好，但少了 Tools）'
+        )
+        if ((Test-Path $cached) -and (Get-Item $cached).Length -gt 10MB) { Write-Ok "VMware Tools：$cached"; return $cached }
+        Write-Note '沒有 VMware Tools 光碟，這次建的 VM 不會有 Tools'
         return $null
     }
 }
