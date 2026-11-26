@@ -121,7 +121,7 @@ Cloudflare Access（登入驗證）──► cloudflared（裝在筆電上）
 
 1. 開 <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → 最下面 **Create Custom Token** → Get started
 2. Token name：`test-lab-deploy`
-3. Permissions 按 **+ Add more**，加這 7 項：
+3. 勾選這 7 項權限：類別是 Account 的在 **Account policy** 區塊勾，Zone 的在 **Zone policy** 區塊勾（可以用「Search for permission groups」搜尋名稱）。舊版畫面則是在 Permissions 按 **+ Add more** 一項一項加：
 
    | 類別 | 項目 | 權限 |
    |---|---|---|
@@ -133,9 +133,16 @@ Cloudflare Access（登入驗證）──► cloudflared（裝在筆電上）
    | Zone | DNS | Edit |
    | Zone | Zone | Read |
 
-4. Account Resources：Include → 你的帳號；Zone Resources：Include → Specific zone → `hackray.dev`
+4. 指定這組 token 能用在哪裡（新版畫面把權限分成兩個區塊，各自最上面有一列 **Include** 下拉）：
+   - **Account policy** 區塊：Include → 選你的帳號（或 All accounts）
+   - **Zone policy** 區塊：Include → **Specific zone** → `hackray.dev`（選 All zones 也能用，但範圍比較大）
+
+   > 舊版畫面叫做「Account Resources」和「Zone Resources」，在權限清單下方，意思一樣。
 5. Continue to summary → Create Token，**複製 token**（只會顯示一次）
-6. 回到 PowerShell 貼上（畫面不會顯示字元，貼上後按 Enter）
+6. token 複製好之後，回到 PowerShell 按 Enter，腳本會從剪貼簿讀取（不會顯示在畫面上，讀完會清掉剪貼簿）
+
+   > 另一種方式：在執行 deploy.ps1 的同一個 PowerShell 視窗先輸入
+   > `$env:CF_API_TOKEN = '你的token'`，再執行 deploy.ps1，腳本就會直接使用。
 
 token 會存在 `C:\TestLab\secrets\cf_api_token.txt`（只有你的帳號能讀），之後重跑不用再輸入。
 
@@ -182,8 +189,8 @@ token 會存在 `C:\TestLab\secrets\cf_api_token.txt`（只有你的帳號能讀
 2. 出現 Cloudflare 登入頁 → 輸入你的 email → 收信拿驗證碼登入
    - 如果登入頁沒有「寄驗證碼」的選項：到 Zero Trust → Settings → Authentication → Login methods → Add new → **One-time PIN**
 3. 進到 Portal，右上角應該顯示你的 email（SA）
-4. 喚醒 client：選銀行 →「Client」→ **喚醒**。狀態會從 `starting` 變成 `ready`（VM 沒開機的話要 2–5 分鐘）
-5. 按 **開啟遠端桌面** → 瀏覽器裡出現 Windows 登入畫面
+4. 喚醒 client：選銀行 →「Client」→ **喚醒並連線**。會先開一個「正在準備」分頁（VM 沒開機的話要 2–5 分鐘）
+5. 就緒後分頁會顯示帳號（tester）和這次的**一次性密碼**，按「複製密碼並連線」→ 登入畫面帳號打 tester、密碼按 Ctrl+V。密碼也會顯示在 Portal「我的分配」，可以再複製；釋放後這組密碼就失效
    - 使用者名稱：`.\tester`（前面的 `.\` 代表本機帳號）
    - 密碼：`secrets.json` 的 `TesterPassword`
 6. 看到 Windows 桌面就成功了
@@ -275,8 +282,12 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 | VMware 跳出 `No PCIe slot available for SCSI0` | 舊版腳本產生的 vmx 少了 PCIe 橋接設定。更新到新版後，在 VMware 關掉那台 VM 的分頁，重跑 deploy.ps1（會重新產生 vmx） |
 | 「找不到 VMware NAT 網卡（VMnet8）」 | 開 VMware → Edit → Virtual Network Editor → Change Settings → 確認 VMnet8 是 NAT，遮罩 255.255.255.0 |
 | VM 安裝超過 90 分鐘沒完成 | 在 VMware 打開那台 VM 看畫面。常見：ISO 檔不完整（刪掉重下載）、`ImageIndex` 選到 Core 版（要用 2 或 4）。處理後刪掉 `C:\TestLab\VMs\<名稱>` 資料夾再重跑 |
+| 貼上 token 時一次只能貼一個字 | 舊版腳本用隱藏輸入，Windows PowerShell 5.1 不支援整段貼上。更新到新版（改成從剪貼簿讀取），或先在同一個視窗設定 `$env:CF_API_TOKEN = '你的token'` 再重跑 |
+| 瀏覽器 RDP 裡打字會觸發瀏覽器快捷鍵（例如按 T 開新分頁） | 多半是用 Firefox：它不讓網頁攔截 Ctrl+T / W / N。改用 Edge 或 Chrome；也可以把左右 Ctrl、Shift、Alt 各按一下放開，讓按鍵狀態同步 |
+| VM 密碼太長、RDP 或 VMware 畫面不能貼上 | 在主機跑 `deploy\set-vm-password.ps1 -User tester`（或 `-User Administrator`）改成好打的密碼，不用進 VM。中文、時區設定可跑 `deploy\apply-guest-settings.ps1`。新部署可在 `lab.config.psd1` 先填 `AdminPassword` / `TesterPassword` |
+| 「token 看不到任何帳號」 | token 少了 Account Settings: Read。到 API Tokens 編輯這把 token 補上這項權限（token 字串不變，不用重貼），再跑 `-Stage Cloudflare`。新版腳本會改從網域找帳號，通常不會再遇到 |
 | Cloudflare「token 無效」 | token 複製不完整或權限不夠，照 4.3 重建 |
-| Cloudflare「看不到 zone」 | token 的 Zone Resources 沒選到 `hackray.dev` |
+| Cloudflare「看不到 zone」 | token 的 Zone policy（舊版叫 Zone Resources）沒包含 `hackray.dev` |
 | 開 `lab.hackray.dev` 顯示 502 / 1033 | Portal 或 cloudflared 沒在跑。看 `services.msc` 的 cloudflared 是否「執行中」；Portal 看 `C:\TestLab\data\portal.log` |
 | 登入後 Portal 顯示「不在權限表裡」 | 用來登入的 email 跟 SA 的 email 不一樣，或還沒被加入名單 |
 | 喚醒後一直 `starting`，最後 `failed` | server 的 AP / SQL port 沒開（見 6.3），或 VM 卡在開機。到 Portal 的稽核紀錄看 `health_timeout` 是哪個 port |
@@ -287,10 +298,13 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 
 Log 位置：
 
+- 部署過程：`C:\TestLab\logs\deploy-<日期時間>.log`（每跑一次一個檔）
 - 部署狀態：`deploy\.state\state.json`
 - Portal：`C:\TestLab\data\portal.log`
 - VM 內首次設定：VM 裡的 `C:\TestLab\setup-guest.log`
 - VM 內閒置判斷：VM 裡的 `C:\TestLab\idle-state.json`
+- cloudflared：Windows 事件檢視器 → Windows 記錄 → 應用程式，來源 cloudflared；或 `Get-WinEvent -ProviderName cloudflared -MaxEvents 30`
+- Portal 操作紀錄（誰申請、釋放、延長）：Portal → 稽核紀錄（SA 才看得到）
 
 ---
 

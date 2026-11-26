@@ -52,6 +52,11 @@ class VMDriver(ABC):
     def ip(self, vm: VMSpec) -> str | None:
         """回傳 VM 的 IP；還拿不到時回 None。"""
 
+    def set_guest_password(self, vm: VMSpec, admin_user: str, admin_password: str,
+                           user: str, new_password: str) -> None:
+        """在 VM 裡改本機帳號密碼（一次性密碼用）。不支援的 driver 丟 DriverError。"""
+        raise DriverError(f"{self.name} driver 不支援改 VM 密碼")
+
     def health(self, vm: VMSpec, timeout: float = 2.0) -> dict[int, bool]:
         """對 vm.ports 逐一做 TCP 連線檢查（3389 / AP / SQL）。"""
         host = vm.host or self.ip(vm)

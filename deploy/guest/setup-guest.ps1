@@ -35,6 +35,12 @@ $ts = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
 New-Item -Path $ts -Force | Out-Null
 Set-ItemProperty $ts -Name MaxDisconnectionTime -Value (8 * 3600 * 1000)
 
+# ---- 關掉 Shutdown Event Tracker（測試機常被直接關電源，不要每次登入都問關機原因） ----
+$rel = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
+New-Item -Path $rel -Force | Out-Null
+Set-ItemProperty $rel -Name ShutdownReasonOn -Value 0 -Type DWord
+Set-ItemProperty $rel -Name ShutdownReasonUI -Value 0 -Type DWord
+
 # ---- 其他要開的 port（server 的 AP / SQL） -----------------------------------
 $extra = @($cfg.Ports | Where-Object { $_ -ne 3389 })
 if ($extra.Count -gt 0) {
@@ -70,6 +76,21 @@ $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
     -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
 Register-ScheduledTask -TaskName 'TestLab-IdleShutdown' -Action $action -Trigger $trigger `
     -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+
+# ---- 台北時區、繁體中文輸入（介面維持英文） --------------------------------------
+Set-TimeZone -Id 'Taipei Standard Time'
+try {
+    # 需要連網下載語言套件；失敗不擋部署，之後可以手動裝
+    if (Get-Command Install-Language -ErrorAction SilentlyContinue) { Install-Language -Language zh-TW | Out-Null }
+    $langs = New-WinUserLanguageList 'en-US'
+    $langs.Add('zh-TW')                 # 預設帶微軟注音
+    Set-WinUserLanguageList $langs -Force
+    Set-WinSystemLocale zh-TW           # 非 Unicode 程式（Big5）用繁中，重開機後生效
+    Set-Culture zh-TW
+    if (Get-Command Copy-UserInternationalSettingsToSystem -ErrorAction SilentlyContinue) {
+        Copy-UserInternationalSettingsToSystem -WelcomeScreen $true -NewUser $true   # tester 第一次登入就有注音
+    }
+} catch { Write-Warning "安裝繁體中文失敗：$_" }
 
 # ---- 關掉自動登入（autounattend 只為了跑這支腳本才開） -----------------------
 $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'

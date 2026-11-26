@@ -67,6 +67,16 @@ function New-LabPortalToml {
         $L.Add('api_token_file = ' + (ConvertTo-TomlString $TokenFile))
     } else { $L.Add('enabled = false') }
     $L.Add('')
+    $L.Add('# 遠端桌面測試帳號：Portal 在「我的分配」顯示帳號與密碼（共用密碼每次從 secrets.json 讀）')
+    $L.Add('[rdp]')
+    $L.Add('username = ' + (ConvertTo-TomlString $Config.TesterUser))
+    $L.Add('secrets_file = ' + (ConvertTo-TomlString (Join-Path (Split-Path -Parent $PSScriptRoot) '.state\secrets.json')))
+    $L.Add('secrets_key = "TesterPassword"')
+    $L.Add('# 每次分配 client 時換一組一次性密碼，釋放時換回共用密碼（需要 VM 裡有 VMware Tools）')
+    $L.Add('one_time_password = true')
+    $L.Add('admin_user = "Administrator"')
+    $L.Add('admin_key = "AdminPassword"')
+    $L.Add('')
     $L.Add('[driver]')
     $L.Add('type = "vmrun"')
     $L.Add('vmrun_path = ' + (ConvertTo-TomlString $VmrunPath))
@@ -137,9 +147,11 @@ function Install-LabPortal {
 
     # 用目前使用者「登入時」啟動：VMware Workstation 的 VM 屬於這個使用者，vmrun 要用同一個帳號跑
     $log = Join-Path $InstallRoot 'data\portal.log'
-    $cmd = "& '$vpy' -m portal --config '$toml' *>> '$log'"
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$cmd`"" -WorkingDirectory $RepoRoot
+    # 用 pythonw.exe 跑：沒有主控台，不會留下空白視窗（Windows Terminal 會忽略 -WindowStyle Hidden）
+    $vpyw = Join-Path (Split-Path $vpy) 'pythonw.exe'
+    if (-not (Test-Path $vpyw)) { $vpyw = $vpy }
+    $action = New-ScheduledTaskAction -Execute $vpyw `
+        -Argument "-m portal --config `"$toml`" --log-file `"$log`"" -WorkingDirectory $RepoRoot
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable

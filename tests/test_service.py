@@ -182,3 +182,29 @@ def test_extension_delays_after_hours_release(portal, clock):
     assert portal.reconcile()["after_hours_released"] == []
     clock.set(2026, 11, 25, 19, 0)
     assert portal.reconcile()["after_hours_released"] == [a["id"]]
+
+
+def test_rdp_credentials_read_from_secrets_file(portal, tmp_path):
+    assert portal.rdp_credentials() is None
+    f = tmp_path / "secrets.json"
+    f.write_text('{"TesterPassword": "Pw-1"}', encoding="utf-8-sig")
+    portal.cfg.raw["rdp"] = {"username": "tester", "secrets_file": str(f)}
+    assert portal.rdp_credentials() == {"username": "tester", "password": "Pw-1"}
+    f.write_text('{"TesterPassword": "Pw-2"}', encoding="utf-8")
+    assert portal.rdp_credentials()["password"] == "Pw-2"
+
+
+def test_one_time_password_per_client_allocation(portal, driver, clock, tmp_path):
+    f = tmp_path / "secrets.json"
+    f.write_text('{"TesterPassword": "Shared-1", "AdminPassword": "Adm-1"}', encoding="utf-8")
+    portal.cfg.raw["rdp"] = {"username": "tester", "secrets_file": str(f), "one_time_password": True}
+    pm = u(portal, "pm@example.com")
+    a = portal.wake(pm, "demo-a", "client")
+    clock.set(2026, 11, 25, 10, 2)
+    a = portal.check_allocation(a["id"])
+    assert a["status"] == "ready"
+    otp = a["rdp_password"]
+    assert otp and otp != "Shared-1"
+    assert driver.passwords[(a["vm"], "tester")] == otp
+    portal.release(pm, a["id"])
+    assert driver.passwords[(a["vm"], "tester")] == "Shared-1"

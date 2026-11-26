@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import secrets
 import threading
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -17,6 +19,15 @@ from .db import DB
 from .drivers import DriverError, PowerState, VMDriver, VMSpec
 from .errors import PortalError
 from .users import UserStore
+
+log = logging.getLogger(__name__)
+
+
+def new_password() -> str:
+    """好打、好念的一次性密碼，例如 Kp7-Wm3x-Rt9（符合 Windows 複雜度）。"""
+    up, lo, dg = "ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789"
+    c = secrets.choice
+    return f"{c(up)}{c(lo)}{c(dg)}-{c(up)}{c(lo)}{c(dg)}{c(lo)}-{c(up)}{c(lo)}{c(dg)}"
 
 ACTIVE = ("starting", "ready")
 
@@ -319,7 +330,67 @@ class Portal:
             a["server"] = srv.name if srv else None
         return a
 
+    def _secret(self, key: str, default: str = "") -> str:
+        rdp = self.cfg.raw.get("rdp", {})
+        path = rdp.get("secrets_file")
+        if path:
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    return json.load(f).get(key, default) or default
+            except (OSError, ValueError):
+                pass
+        return default
+
+    def rdp_credentials(self) -> dict[str, str] | None:
+        """VM 共用測試帳號。密碼每次從 secrets 檔讀（主機上改密碼後不用重啟 Portal）。"""
+        rdp = self.cfg.raw.get("rdp", {})
+        user = rdp.get("username")
+        if not user:
+            return None
+        password = self._secret(rdp.get("secrets_key", "TesterPassword"), rdp.get("password", ""))
+        return {"username": user, "password": password}
+
+    def _otp_enabled(self) -> bool:
+        rdp = self.cfg.raw.get("rdp", {})
+        return bool(rdp.get("username")) and bool(rdp.get("one_time_password", False))
+
+    def _set_tester_password(self, vm: VMSpec, password: str) -> None:
+        rdp = self.cfg.raw.get("rdp", {})
+        admin_user = rdp.get("admin_user", "Administrator")
+        admin_pw = self._secret(rdp.get("admin_key", "AdminPassword"))
+        self.driver.set_guest_password(vm, admin_user, admin_pw, rdp["username"], password)
+
+    def _issue_otp(self, a: dict[str, Any]) -> None:
+        """client 分配就緒前，把 VM 的測試帳號換成這次專用的密碼。失敗就沿用共用密碼。"""
+        if a["kind"] != "client" or not self._otp_enabled() or a.get("rdp_password"):
+            return
+        vm = self.cfg.vms[a["vm"]]
+        pw = new_password()
+        try:
+            self._set_tester_password(vm, pw)
+        except DriverError as e:
+            log.warning("一次性密碼設定失敗（%s），沿用共用密碼：%s", vm.name, e)
+            self.audit(a["email"], "otp_failed", alloc=a["id"], vm=vm.name)
+            return
+        self.db.execute("UPDATE allocations SET rdp_password=? WHERE id=?", (pw, a["id"]))
+
+    def _revoke_otp(self, alloc_id: int) -> None:
+        """分配結束：把密碼換回共用密碼，上一位的一次性密碼就失效。"""
+        a = self.db.one("SELECT * FROM allocations WHERE id=?", (alloc_id,))
+        if not a or not a.get("rdp_password") or not self._otp_enabled():
+            return
+        creds = self.rdp_credentials()
+        vm = self.cfg.vms.get(a["vm"])
+        if vm is None or creds is None:
+            return
+        try:
+            self._set_tester_password(vm, creds["password"] or new_password())
+        except DriverError as e:
+            # VM 已關機之類：下一次分配開機後會再換新密碼
+            log.info("還原 %s 密碼失敗（下次分配會再換）：%s", vm.name, e)
+
     def _end_alloc(self, alloc_id: int, status: str, note: str) -> None:
+        self._revoke_otp(alloc_id)
         self.db.execute(
             "UPDATE allocations SET status=?, ended_at=?, note=? WHERE id=?",
             (status, self.now().isoformat(timespec="seconds"), note, alloc_id))
@@ -348,16 +419,22 @@ class Portal:
             except DriverError:
                 results[vm.name] = {p: False for p in vm.ports}
         if all(all(r.values()) for r in results.values()):
-            self.db.execute("UPDATE allocations SET status='ready', ready_at=? WHERE id=?",
+            self._issue_otp(a)
+            self.db.execute("UPDATE allocations SET status='ready', ready_at=?, note=NULL WHERE id=?",
                             (self.now().isoformat(timespec="seconds"), alloc_id))
             self.audit(a["email"], "ready", alloc=alloc_id, vm=a["vm"])
         else:
+            failed = {n: [p for p, ok in r.items() if not ok] for n, r in results.items()}
+            failed = {n: ps for n, ps in failed.items() if ps}
             created = datetime.fromisoformat(a["created_at"])
             limit = float(self.cfg.portal.get("health_timeout_seconds", 600))
             if (self.now() - created).total_seconds() > limit:
-                failed = {n: [p for p, ok in r.items() if not ok] for n, r in results.items()}
                 self._end_alloc(alloc_id, "failed", json.dumps(failed))
                 self.audit(a["email"], "health_timeout", alloc=alloc_id, failed=failed)
+            else:
+                # 等待中也記下還不通的 port，畫面上看得到卡在哪
+                note = "等待連線：" + "、".join(f"{n} port {','.join(map(str, ps))}" for n, ps in failed.items())
+                self.db.execute("UPDATE allocations SET note=? WHERE id=?", (note, alloc_id))
         return self.allocation(alloc_id)
 
     def process_pending(self) -> None:

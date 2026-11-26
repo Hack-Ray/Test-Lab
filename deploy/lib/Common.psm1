@@ -27,6 +27,22 @@ function Wait-LabUser {
     [void](Read-Host '完成後按 Enter 繼續（Ctrl+C 可中止，之後重跑會從這一步接著做）')
 }
 
+function Read-LabFromClipboard([string]$What) {
+    <#
+      Windows PowerShell 5.1 的隱藏輸入（Read-Host -AsSecureString）不能整段貼上，
+      所以改成：使用者先複製，按 Enter 後從剪貼簿讀取。讀完清掉剪貼簿，不在畫面上顯示。
+    #>
+    while ($true) {
+        [void](Read-Host "請先複製 $What，回到這個視窗按 Enter（腳本會從剪貼簿讀取，不會顯示在畫面上）")
+        $v = (Get-Clipboard | Out-String).Trim().Trim("'", '"')
+        if ($v -and $v -notmatch '\s') {
+            try { Set-Clipboard -Value ' ' } catch { }
+            return $v
+        }
+        Write-Note "剪貼簿裡不是 $What（空的或含空白），請再複製一次"
+    }
+}
+
 function Read-LabSecret([string]$Prompt) {
     $sec = Read-Host -Prompt $Prompt -AsSecureString
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
@@ -79,12 +95,20 @@ function Protect-LabPath([string]$Path) {
     } catch { Write-Note "無法設定 $Path 的權限：$_" }
 }
 
-function Get-LabSecrets {
+function Get-LabSecrets($Config) {
+    # 第一次產生：設定檔有填 AdminPassword / TesterPassword 就用，沒填就隨機
+    # 之後以 secrets.json 為準（VM 已用這組密碼建好）；要改已建好 VM 的密碼用 set-vm-password.ps1
     $path = Join-Path $script:StateDir 'secrets.json'
     if (Test-Path $path) { return (Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json) }
-    $s = [pscustomobject]@{ AdminPassword = (New-LabPassword); TesterPassword = (New-LabPassword) }
-    $s | ConvertTo-Json | Set-Content -Path $path -Encoding UTF8
+    $admin = if ($Config -and $Config.AdminPassword) { $Config.AdminPassword } else { New-LabPassword }
+    $tester = if ($Config -and $Config.TesterPassword) { $Config.TesterPassword } else { New-LabPassword }
+    $s = [pscustomobject]@{ AdminPassword = $admin; TesterPassword = $tester }
+    Save-LabSecrets $s
     return $s
+}
+
+function Save-LabSecrets($Secrets) {
+    $Secrets | ConvertTo-Json | Set-Content -Path (Join-Path $script:StateDir 'secrets.json') -Encoding UTF8
 }
 
 # ---- 網路 -------------------------------------------------------------------

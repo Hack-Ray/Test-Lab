@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS allocations (
     created_at  TEXT NOT NULL,
     ready_at    TEXT,
     ended_at    TEXT,
-    note        TEXT
+    note        TEXT,
+    rdp_password TEXT                   -- client 分配的一次性密碼
 );
 CREATE INDEX IF NOT EXISTS ix_alloc_status ON allocations(status);
 
@@ -82,7 +83,14 @@ class DB:
         self.lock = threading.RLock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            self._migrate()
             self.conn.commit()
+
+    def _migrate(self) -> None:
+        """舊資料庫補欄位。"""
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(allocations)")}
+        if "rdp_password" not in cols:
+            self.conn.execute("ALTER TABLE allocations ADD COLUMN rdp_password TEXT")
 
     def execute(self, sql: str, params: tuple | dict = ()) -> sqlite3.Cursor:
         with self.lock:

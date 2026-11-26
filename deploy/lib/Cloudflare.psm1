@@ -10,7 +10,7 @@ $script:TokenPermissions = @(
     'Account → Access: Organizations, Identity Providers, and Groups → Edit',
     'Account → Zero Trust → Edit（建立 RDP 目標用）',
     'Account → Account Settings → Read',
-    'Zone → DNS → Edit（Zone Resources 選你的網域）',
+    'Zone → DNS → Edit',
     'Zone → Zone → Read'
 )
 
@@ -44,9 +44,10 @@ function Initialize-LabCfToken([string]$TokenFile) {
                 '開 https://dash.cloudflare.com/profile/api-tokens → Create Token → Create Custom Token',
                 '名稱填 test-lab-deploy，權限加這幾項：'
             ) + ($script:TokenPermissions | ForEach-Object { "    $_" }) + @(
-                'Account Resources 選你的帳號；建立後複製 token（只會顯示一次）'
+                'Account policy 的 Include 選你的帳號；Zone policy 的 Include 選 Specific zone → 你的網域（舊版畫面叫 Account / Zone Resources）',
+                '建立後複製 token（只會顯示一次）'
             ))
-            $script:CfToken = Read-LabSecret '貼上 API token'
+            $script:CfToken = Read-LabFromClipboard 'Cloudflare API token'
         }
         try {
             $v = Invoke-Cf GET '/user/tokens/verify'
@@ -64,9 +65,12 @@ function Initialize-LabCfToken([string]$TokenFile) {
 # ---- 查詢小工具 ----------------------------------------------------------------
 function Find-CfItem($Items, [scriptblock]$Where) { return @($Items | Where-Object $Where) | Select-Object -First 1 }
 
-function Get-LabCfAccount {
-    $accounts = @(Invoke-Cf GET '/accounts?per_page=50')
-    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號，請確認 Account Resources 有選到你的帳號' }
+function Get-LabCfAccount($Zone) {
+    # 先用 zone 帶的帳號（只要 Zone Read 就看得到），不必依賴 Account Settings: Read
+    if ($Zone -and $Zone.account -and $Zone.account.id) { return $Zone.account }
+    $accounts = @()
+    try { $accounts = @(Invoke-Cf GET '/accounts?per_page=50') } catch { Write-Note $_ }
+    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號：請編輯 token，權限加上 Account → Account Settings → Read，且 Account policy 包含你的帳號' }
     if ($accounts.Count -eq 1) { return $accounts[0] }
     for ($i = 0; $i -lt $accounts.Count; $i++) { Write-Info ("[{0}] {1}" -f $i, $accounts[$i].name) }
     return $accounts[[int](Read-Host '選擇要用的帳號編號')]
@@ -74,7 +78,7 @@ function Get-LabCfAccount {
 
 function Get-LabCfZone([string]$Zone) {
     $z = Find-CfItem (Invoke-Cf GET "/zones?name=$Zone") { $_.name -eq $Zone }
-    if (-not $z) { throw "token 看不到 zone $Zone。請確認網域已加入 Cloudflare，且 token 的 Zone Resources 有包含它" }
+    if (-not $z) { throw "token 看不到 zone $Zone。請確認網域已加入 Cloudflare，且 token 的 Zone policy 有包含它" }
     return $z
 }
 
@@ -93,17 +97,54 @@ function Get-LabCfTeamDomain([string]$AccountId) {
     }
 }
 
-# ---- Tunnel ----------------------------------------------------------------------
-function Install-LabCloudflared {
-    $exe = @("${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe", "$env:ProgramFiles\cloudflared\cloudflared.exe") |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $exe) {
-        Write-Info '用 winget 安裝 cloudflared…'
-        [void](Invoke-LabWinget 'Cloudflare.cloudflared')
-        $exe = @("${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe", "$env:ProgramFiles\cloudflared\cloudflared.exe") |
-            Where-Object { Test-Path $_ } | Select-Object -First 1
+function Initialize-LabOtpIdp([string]$AccountId) {
+    # 讓沒有 GitHub / Cloudflare 帳號的同事也能用 email 收驗證碼登入
+    $idps = @()
+    try { $idps = @(Invoke-Cf GET "/accounts/$AccountId/access/identity_providers") } catch { Write-Note $_ }
+    if (Find-CfItem $idps { $_.type -eq 'onetimepin' }) { Write-Ok '登入方式 One-time PIN 已存在'; return }
+    try {
+        Invoke-Cf POST "/accounts/$AccountId/access/identity_providers" @{ name = 'One-time PIN'; type = 'onetimepin'; config = @{} } | Out-Null
+        Write-Ok '已加入登入方式 One-time PIN（email 驗證碼）'
+    } catch {
+        Write-Note "無法自動加入 One-time PIN：$_"
+        Write-Note '請到 Zero Trust → Settings → Authentication → Login methods → Add new → One-time PIN'
     }
-    if (-not $exe) { throw '安裝 cloudflared 失敗，請手動從 https://github.com/cloudflare/cloudflared/releases 安裝 MSI 後重跑' }
+}
+
+# ---- Tunnel ----------------------------------------------------------------------
+function Find-LabCloudflared {
+    $cands = @(
+        "${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe",
+        "$env:ProgramFiles\cloudflared\cloudflared.exe",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cloudflared.exe"
+    )
+    $cmd = Get-Command cloudflared.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $cands += $cmd.Source }
+    $pkg = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path $pkg) {
+        $cands += @(Get-ChildItem $pkg -Filter cloudflared*.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    }
+    return $cands | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
+function Install-LabCloudflared {
+    $exe = Find-LabCloudflared
+    if (-not $exe) {
+        # 直接下載官方 MSI 安裝（不走 winget：系統管理員視窗常找不到 winget）
+        Write-Info '從 GitHub 下載 cloudflared MSI 安裝…'
+        $msi = Join-Path $env:TEMP 'cloudflared-windows-amd64.msi'
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi' -OutFile $msi -UseBasicParsing
+            $ProgressPreference = $old
+            $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+            if ($p.ExitCode -ne 0) { Write-Note "msiexec 結束代碼 $($p.ExitCode)" }
+        } catch { Write-Note $_ }
+        $exe = Find-LabCloudflared
+    }
+    if (-not $exe) { throw '安裝 cloudflared 失敗，請手動從 https://github.com/cloudflare/cloudflared/releases 下載 cloudflared-windows-amd64.msi 安裝後重跑' }
+    Write-Ok "cloudflared：$exe"
     return $exe
 }
 
@@ -170,7 +211,6 @@ function Initialize-LabGroup([string]$AccountId, [string]$Name, [string]$AdminEm
 
 function Initialize-LabPolicy([string]$AccountId, [string]$Name, [string]$GroupId, [switch]$Rdp) {
     $p = Find-CfItem (Invoke-Cf GET "/accounts/$AccountId/access/policies?per_page=100") { $_.name -eq $Name }
-    if ($p) { Write-Ok "沿用 Access Policy $Name"; return $p.id }
     $body = @{ name = $Name; decision = 'allow'; include = @(@{ group = @{ id = $GroupId } }) }
     if ($Rdp) {
         # 剪貼簿：文字雙向可用（預設是全部禁止）
@@ -178,6 +218,12 @@ function Initialize-LabPolicy([string]$AccountId, [string]$Name, [string]$GroupI
             allowed_clipboard_local_to_remote_formats = @('text')
             allowed_clipboard_remote_to_local_formats = @('text')
         } }
+    }
+    if ($p) {
+        # 重跑時也把設定（例如剪貼簿）補回去
+        Invoke-Cf PUT "/accounts/$AccountId/access/policies/$($p.id)" $body | Out-Null
+        Write-Ok "更新 Access Policy $Name"
+        return $p.id
     }
     $p = Invoke-Cf POST "/accounts/$AccountId/access/policies" $body
     Write-Ok "建立 Access Policy $Name"
@@ -243,10 +289,11 @@ function Invoke-LabCloudflareSetup {
     <# 回傳 Portal 需要的 Cloudflare 設定值。 #>
     param($Config, $Vms, $Net, [string]$TokenFile)
     Initialize-LabCfToken $TokenFile
-    $acct = Get-LabCfAccount
     $zone = Get-LabCfZone $Config.Zone
+    $acct = Get-LabCfAccount $zone
     $team = Get-LabCfTeamDomain $acct.id
     Write-Ok "帳號 $($acct.name)、zone $($zone.name)、team $team"
+    Initialize-LabOtpIdp $acct.id
 
     $tunnelId = Initialize-LabTunnel $acct.id 'test-lab' $Config.PortalHost
     $vnetId = Initialize-LabRoute $acct.id $tunnelId $Net.Cidr

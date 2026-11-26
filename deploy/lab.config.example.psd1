@@ -25,7 +25,11 @@
     TimeZone      = 'Taipei Standard Time'
 
     # ---- VM 內的設定 ------------------------------------------------------
-    TesterUser    = 'tester'                   # 大家共用的固定測試帳號（密碼部署時隨機產生）
+    TesterUser    = 'tester'                   # 大家共用的固定測試帳號
+    # 想用好打的密碼就填（要有大小寫、數字、符號，至少 8 碼）；留空就隨機產生。只在第一次建 VM 時用，
+    # 之後要改請跑 deploy\set-vm-password.ps1。這個檔不會進 git。
+    AdminPassword  = ''
+    TesterPassword = ''
     IdleMinutes   = 30                         # 沒人用多久後自動關機
 
     # ---- 銀行與 VM ----------------------------------------------------------

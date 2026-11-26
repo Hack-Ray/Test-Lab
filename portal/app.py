@@ -150,6 +150,13 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
                                 for u in portal.users.enabled_users()]
         return out
 
+    @app.get("/api/rdp-credentials")
+    def rdp_credentials(user: User = Depends(require("SA"))) -> dict[str, Any]:
+        c = portal.rdp_credentials()
+        if c is None:
+            raise PortalError(404, "沒有設定 VM 測試帳號")
+        return c
+
     @app.get("/api/whoami")
     def whoami(request: Request) -> dict[str, Any]:
         """不需要在名單裡也能呼叫：給還沒有權限的人看自己的狀態、送申請。"""
@@ -200,25 +207,39 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
     def cf_sync_now(user: User = Depends(require("SA"))):
         return portal.sync_access(user.email)
 
+    def view(a: dict[str, Any], user: User) -> dict[str, Any]:
+        """一次性密碼只給這筆分配的本人看，而且只在使用中時。"""
+        a = dict(a)
+        mine = a["email"] == user.email
+        if mine and a["status"] == "ready":
+            creds = portal.rdp_credentials()
+            if creds:
+                a["rdp_user"] = creds["username"]
+                if not a.get("rdp_password"):
+                    a["rdp_password"] = creds["password"]   # 一次性密碼沒設成功時用共用密碼
+        if not (mine and a["status"] == "ready"):
+            a.pop("rdp_password", None)
+        return a
+
     @app.post("/api/wake")
     def wake(body: WakeIn, user: User = Depends(current_user)):
-        return portal.wake(user, body.bank, body.kind)
+        return view(portal.wake(user, body.bank, body.kind), user)
 
     @app.get("/api/allocations")
     def allocations(all: bool = False, user: User = Depends(current_user)):
         see_all = all and user.role in SERVER_ROLES
-        return portal.allocations_for(user, mine_only=not see_all)
+        return [view(a, user) for a in portal.allocations_for(user, mine_only=not see_all)]
 
     @app.get("/api/allocations/{alloc_id}")
     def allocation(alloc_id: int, user: User = Depends(current_user)):
         a = portal.allocation(alloc_id)
         if a["email"] != user.email and user.role not in SERVER_ROLES:
             raise PortalError(403, "不能查看別人的分配")
-        return a
+        return view(a, user)
 
     @app.post("/api/allocations/{alloc_id}/release")
     def release(alloc_id: int, user: User = Depends(current_user)):
-        return portal.release(user, alloc_id)
+        return view(portal.release(user, alloc_id), user)
 
     @app.post("/api/extend")
     def extend(body: ExtendIn, user: User = Depends(current_user)):
