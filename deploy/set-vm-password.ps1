@@ -33,18 +33,15 @@ while ($true) {
     $b = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p2))
     if ($a -ne $b) { Write-Note '兩次不一樣，請重打'; continue }
     if ($a.Length -lt 8) { Write-Note '至少 8 碼'; continue }
+    $kinds = @('[A-Z]', '[a-z]', '[0-9]', '[^A-Za-z0-9]' | Where-Object { $a -cmatch $_ }).Count
+    if ($kinds -lt 3) { Write-Note 'Windows 要求大寫、小寫、數字、符號至少三種，例如 Lab@2026x'; continue }
+    if ($a -match [regex]::Escape($account)) { Write-Note "密碼不能包含帳號名稱 $account"; continue }
+    if ($a -match '[\s"]') { Write-Note '密碼不能有空白或雙引號'; continue }
     break
 }
 
-# 用 Administrator 的身分在 VM 裡改密碼；密碼用 base64 帶進去，避免引號、符號被吃掉
-$pwB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($a))
-$script = @"
-`$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$pwB64'))
-`$sec = ConvertTo-SecureString `$pw -AsPlainText -Force
-Set-LocalUser -Name '$account' -Password `$sec
-"@
-$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-$ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+# 用 Administrator 的身分在 VM 裡直接跑 net.exe 改密碼（不經過 PowerShell）
+$net = 'C:\Windows\System32\net.exe'
 
 $okCount = 0; $failed = @()
 foreach ($vm in $Config.VMs) {
@@ -52,8 +49,11 @@ foreach ($vm in $Config.VMs) {
     $s = Get-LabStateValue "vm_$($vm.Name)"
     if (-not $s) { continue }
     if (-not (Test-LabVmRunning $VMware $s.Vmx)) { Write-Note "$($vm.Name) 沒開機，跳過"; $failed += $vm.Name; continue }
-    & $VMware.Vmrun -T ws -gu Administrator -gp $Secrets.AdminPassword runProgramInGuest $s.Vmx $ps "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
+    Write-Info "$($vm.Name)：檢查 VMware Tools…"
+    $tools = Get-LabToolsState $VMware $s.Vmx
+    if ($tools -ne 'running') { Write-Note "$($vm.Name)：VMware Tools 狀態是 $tools（要 running 才能從主機操作），跳過"; $failed += $vm.Name; continue }
+    Write-Info "$($vm.Name)：改密碼中…"
+    if (Invoke-LabGuestProgram $VMware $s.Vmx 'Administrator' $Secrets.AdminPassword $net @('user', $account, $a) 120) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
     else { Write-Note "$($vm.Name)：失敗（VM 裡沒有 VMware Tools，或目前記錄的 Administrator 密碼不對）"; $failed += $vm.Name }
 }
 

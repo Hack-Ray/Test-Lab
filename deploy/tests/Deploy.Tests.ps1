@@ -127,13 +127,15 @@ Describe '無人值守安裝檔' {
         Get-LabToolsIso ([pscustomobject]@{ ToolsIso = $tmp }) 'C:\nowhere' | Should -Be $tmp
     }
 
-    It '安裝完拿掉光碟' {
+    It '安裝完拿掉光碟，留一台空光碟機' {
         $tmp = Join-Path ([IO.Path]::GetTempPath()) 'labtest.vmx'
         $vm = @{ Name = 'cli-01'; MemoryMB = 4096; Cpus = 2 }
         New-LabVmx -Vm $vm -DiskFile 'd.vmdk' -WindowsIso 'w' -SetupIso 's' -ToolsIso 't' | Set-Content $tmp
         Remove-LabInstallMedia $tmp
         $text = Get-Content $tmp -Raw
-        $text | Should -Not -Match 'sata0:[123]'
+        $text | Should -Not -Match 'sata0:[23]'
+        $text | Should -Not -Match 'cdrom-image'
+        $text | Should -Match 'sata0:1.deviceType = "cdrom-raw"'
         $text | Should -Match 'scsi0:0.fileName'
         $b = [IO.File]::ReadAllBytes($tmp)
         $b[0] | Should -Not -Be 0xEF   # 不能有 BOM
@@ -182,6 +184,15 @@ Describe 'portal.toml' {
         $t.vms[1].rdp_url | Should -Be 'https://lab-rdp.hackray.dev/rdp/vnet-1/192.168.80.21/3389'
         $t.users[0].email | Should -Be 'ray@example.com'
         $t.banks[0].name | Should -Be '示範銀行 A'
+    }
+
+    It '有網段時產生 [provision]（網頁新增主機用）' {
+        $net = [pscustomobject]@{ Prefix = '192.168.80'; PrefixLength = 24; Gateway = '192.168.80.2'; Dns = '192.168.80.2' }
+        $t = Read-Toml (New-LabPortalToml -Config $script:Cfg -Vms $script:Vms -Cf $script:Cf -InstallRoot 'C:\TestLab' -VmrunPath 'C:\VMware\vmrun.exe' -TokenFile 'x' -Net $net)
+        $t.provision.ip_prefix | Should -Be '192.168.80'
+        $t.provision.gateway | Should -Be '192.168.80.2'
+        $t.provision.vnet_id | Should -Be 'vnet-1'
+        $t.portal.extra_file | Should -Be 'C:\TestLab\data\extra.json'
     }
 
     It '沒有 Cloudflare 時用 dev 模式' {

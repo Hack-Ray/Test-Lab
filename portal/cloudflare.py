@@ -56,13 +56,7 @@ class AccessGroupSync:
     def _call(self) -> Transport:
         if self._transport:
             return self._transport
-        token = os.environ.get(self.token_env, "")
-        if not token and self.token_file and os.path.exists(self.token_file):
-            with open(self.token_file, encoding="utf-8-sig") as f:
-                token = f.read().strip()
-        if not token:
-            raise SyncError(f"沒有 Cloudflare API token（環境變數 {self.token_env} 或 api_token_file）")
-        return _urllib_transport(token)
+        return token_transport({"api_token_env": self.token_env, "api_token_file": self.token_file})
 
     def check_config(self) -> None:
         missing = [k for k, v in (("account_id", self.account_id),
@@ -100,3 +94,66 @@ class AccessGroupSync:
         self._put_group(call, self.groups["users"], all_emails)
         self._put_group(call, self.groups["server"], server_emails)
         return {"users": len(all_emails), "server": len(server_emails)}
+
+
+def token_transport(cfg: dict[str, Any]) -> Transport:
+    """從 [cloudflare_sync] 的 api_token_env / api_token_file 讀 token。"""
+    env = cfg.get("api_token_env", "CF_API_TOKEN")
+    token = os.environ.get(env, "")
+    path = cfg.get("api_token_file", "")
+    if not token and path and os.path.exists(path):
+        with open(path, encoding="utf-8-sig") as f:
+            token = f.read().strip()
+    if not token:
+        raise SyncError(f"沒有 Cloudflare API token（環境變數 {env} 或 api_token_file）")
+    return _urllib_transport(token)
+
+
+class RdpTargets:
+    """新增主機時：建 Cloudflare 的 RDP 目標，並把它加進瀏覽器 RDP 應用程式的目標清單。"""
+
+    READ_ONLY = ("id", "uid", "aud", "created_at", "updated_at", "scim_config")
+
+    def __init__(self, cfg: dict[str, Any], transport: Transport | None = None):
+        self.cfg = cfg
+        self.account_id = cfg.get("account_id", "")
+        self._transport = transport
+
+    def _call(self) -> Transport:
+        return self._transport or token_transport(self.cfg)
+
+    def _ok(self, res: dict[str, Any], what: str) -> Any:
+        if not res.get("success"):
+            raise SyncError(f"{what}失敗：{res.get('errors')}")
+        return res.get("result")
+
+    def upsert_target(self, hostname: str, ip: str, vnet_id: str) -> None:
+        call = self._call()
+        base = f"{API}/accounts/{self.account_id}/infrastructure/targets"
+        found = [t for t in (self._ok(call("GET", f"{base}?hostname={hostname}", None), "查 RDP 目標") or [])
+                 if t.get("hostname") == hostname]
+        body = {"hostname": hostname, "ip": {"ipv4": {"ip_addr": ip, "virtual_network_id": vnet_id}}}
+        if found:
+            self._ok(call("PUT", f"{base}/{found[0]['id']}", body), "更新 RDP 目標")
+        else:
+            self._ok(call("POST", base, body), "建立 RDP 目標")
+
+    def add_to_app(self, app_host: str, hostname: str) -> bool:
+        """回傳 False 表示找不到應用程式（要手動加）。"""
+        call = self._call()
+        base = f"{API}/accounts/{self.account_id}/access/apps"
+        apps = self._ok(call("GET", f"{base}?per_page=100", None), "查 Access 應用程式") or []
+        app = next((a for a in apps if a.get("domain") == app_host), None)
+        if app is None:
+            return False
+        crit = app.get("target_criteria") or [{"port": 3389, "protocol": "RDP", "target_attributes": {}}]
+        names = list(crit[0].setdefault("target_attributes", {}).get("hostname", []))
+        if hostname in names:
+            return True
+        crit[0]["target_attributes"]["hostname"] = names + [hostname]
+        body = {k: v for k, v in app.items() if k not in self.READ_ONLY}
+        body["target_criteria"] = crit
+        body["policies"] = [{"id": p["id"], "precedence": p.get("precedence", i + 1)}
+                            for i, p in enumerate(app.get("policies") or []) if isinstance(p, dict) and p.get("id")]
+        self._ok(call("PUT", f"{base}/{app['id']}", body), "更新瀏覽器 RDP 應用程式")
+        return True

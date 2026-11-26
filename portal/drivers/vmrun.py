@@ -8,15 +8,17 @@
 """
 from __future__ import annotations
 
+from typing import Sequence
+
 import os
-import base64
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 
 from .base import DriverError, PowerState, VMDriver, VMSpec
 
-POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 DEFAULT_VMRUN = r"C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe"
 
 
@@ -86,18 +88,82 @@ class VmrunDriver(VMDriver):
         self._run("stop", self._vmx(vm), "soft")
         self._invalidate()
 
-    def set_guest_password(self, vm: VMSpec, admin_user: str, admin_password: str,
-                           user: str, new_password: str) -> None:
-        # 密碼用 base64 帶進去，避免引號、符號在命令列被吃掉；需要 VM 裡有 VMware Tools
-        pw = base64.b64encode(new_password.encode("utf-8")).decode()
-        script = (
-            f"$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pw}'));"
-            f"Set-LocalUser -Name '{user}' -Password (ConvertTo-SecureString $p -AsPlainText -Force)"
+    def run_program(self, vm: VMSpec, user: str, password: str, program: str,
+                    args: Sequence[str] = (), timeout: float = 120) -> None:
+        if isinstance(args, str):
+            raise TypeError("args 要用 list，每個參數分開")
+        self._run("-gu", user, "-gp", password, "runProgramInGuest", self._vmx(vm), program, *args,
+                  timeout=timeout)
+
+    def _guest(self, vm: VMSpec, user: str, password: str, *args: str, timeout: float = 120) -> str:
+        return self._run("-gu", user, "-gp", password, args[0], self._vmx(vm), *args[1:], timeout=timeout)
+
+    def run_in_guest(self, vm: VMSpec, user: str, password: str, script: str,
+                     timeout: float = 300) -> None:
+        """
+        VMware Tools 直接啟動的 PowerShell 沒有載入使用者設定檔，會直接失敗（exit 1），
+        所以把腳本複製進 VM，用排程工作以 SYSTEM 身分執行，等它寫出完成檔。
+        """
+        tag = f"testlab-{uuid.uuid4().hex[:8]}"
+        g = rf"C:\Windows\Temp\{tag}"
+        wrapped = (
+            "$ErrorActionPreference = 'Stop'\n"
+            f"try {{\n{script}\n'0' | Set-Content '{g}.done' }}\n"
+            f"catch {{ $_ | Out-String | Set-Content '{g}.err'; '1' | Set-Content '{g}.done' }}\n"
         )
-        enc = base64.b64encode(script.encode("utf-16-le")).decode()
-        cmd_auth = ["-gu", admin_user, "-gp", admin_password]
-        self._run(*cmd_auth, "runProgramInGuest", self._vmx(vm), POWERSHELL,
-                  f"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}", timeout=60)
+        # 排程工作的 /tr 只放一個沒有空白的 .cmd 路徑，避開 vmrun 傳參數的引號問題
+        launcher = f"@powershell.exe -NoProfile -ExecutionPolicy Bypass -File {g}.ps1\r\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            host_ps1 = os.path.join(tmp, "s.ps1")
+            with open(host_ps1, "w", encoding="utf-8-sig") as f:
+                f.write(wrapped)
+            host_cmd = os.path.join(tmp, "s.cmd")
+            with open(host_cmd, "w", encoding="ascii", newline="") as f:
+                f.write(launcher)
+            self._guest(vm, user, password, "copyFileFromHostToGuest", host_ps1, g + ".ps1")
+            self._guest(vm, user, password, "copyFileFromHostToGuest", host_cmd, g + ".cmd")
+            schtasks = r"C:\Windows\System32\schtasks.exe"
+            self._guest(vm, user, password, "runProgramInGuest", schtasks,
+                        "/create", "/tn", tag, "/ru", "SYSTEM", "/sc", "once", "/st", "00:00",
+                        "/rl", "highest", "/f", "/tr", g + ".cmd")
+            try:
+                self._guest(vm, user, password, "runProgramInGuest", schtasks, "/run", "/tn", tag)
+                deadline = time.monotonic() + timeout
+                while True:
+                    out = self._guest(vm, user, password, "fileExistsInGuest", g + ".done", timeout=30)
+                    if "not" not in out.lower():
+                        break
+                    if time.monotonic() > deadline:
+                        raise DriverError(f"VM 裡的腳本 {timeout:.0f} 秒內沒跑完")
+                    time.sleep(3)
+                done = os.path.join(tmp, "done")
+                self._guest(vm, user, password, "copyFileFromGuestToHost", g + ".done", done)
+                with open(done, encoding="utf-8-sig", errors="replace") as f:
+                    ok = f.read().strip().startswith("0")
+                if not ok:
+                    err = os.path.join(tmp, "err")
+                    msg = ""
+                    try:
+                        self._guest(vm, user, password, "copyFileFromGuestToHost", g + ".err", err)
+                        with open(err, encoding="utf-8-sig", errors="replace") as f:
+                            msg = f.read().strip()[:500]
+                    except DriverError:
+                        pass
+                    raise DriverError(f"VM 裡的腳本失敗：{msg}")
+            finally:
+                for cleanup in (("runProgramInGuest", schtasks, "/delete", "/tn", tag, "/f"),
+                                ("deleteFileInGuest", g + ".ps1"), ("deleteFileInGuest", g + ".cmd"), ("deleteFileInGuest", g + ".done"),
+                                ("deleteFileInGuest", g + ".err")):
+                    try:
+                        self._guest(vm, user, password, *cleanup, timeout=30)
+                    except DriverError:
+                        pass
+
+    def clone(self, src: VMSpec, snapshot: str, dst_path: str, name: str, linked: bool = True) -> str:
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        self._run("clone", self._vmx(src), dst_path, "linked" if linked else "full",
+                  f"-snapshot={snapshot}", f"-cloneName={name}", timeout=3600)
+        return dst_path
 
     def status(self, vm: VMSpec) -> PowerState:
         try:

@@ -92,11 +92,21 @@ function Get-LabToolsIso($VMware, [string]$IsoDir) {
             ForEach-Object Value | Sort-Object -Unique | Select-Object -Last 1)
         if (-not $name) { throw '找不到 ISO 檔名' }
         New-Item -ItemType Directory -Path $IsoDir -Force | Out-Null
-        Start-BitsTransfer -Source ($base + $name) -Destination $cached -ErrorAction Stop
+        try { Start-BitsTransfer -Source ($base + $name) -Destination $cached -ErrorAction Stop }
+        catch { Invoke-WebRequest -Uri ($base + $name) -OutFile $cached -UseBasicParsing }
         Write-Ok "VMware Tools：$cached"
         return $cached
     } catch {
-        Write-Note "下載 VMware Tools 失敗（$_），先不裝 Tools，VM 照樣會建好"
+        # 沒有 Tools 的話：一次性密碼、主機端改密碼、網頁新增主機都不能用，所以請使用者手動補上
+        Write-Note "下載 VMware Tools 失敗：$_"
+        Wait-LabUser -Title '手動下載 VMware Tools 光碟' -Steps @(
+            "用瀏覽器開 $base",
+            '下載 VMware-tools-windows-<版本>.iso',
+            "存成 $cached",
+            '完成後回到這個視窗按 Enter（不想裝就直接按 Enter，VM 照樣會建好，但少了 Tools）'
+        )
+        if ((Test-Path $cached) -and (Get-Item $cached).Length -gt 10MB) { Write-Ok "VMware Tools：$cached"; return $cached }
+        Write-Note '沒有 VMware Tools 光碟，這次建的 VM 不會有 Tools'
         return $null
     }
 }
@@ -312,12 +322,22 @@ function New-LabVmx {
 }
 
 function Remove-LabInstallMedia([string]$VmxPath) {
-    <# 安裝完拿掉 Windows ISO 和設定光碟（設定光碟裡有密碼）。 #>
+    <#
+      安裝完拿掉 Windows ISO 和設定光碟（設定光碟裡有密碼）。
+      保留一台空的光碟機（sata0:1），之後要掛 VMware Tools 或其他 ISO 才有地方放。
+    #>
     $text = Get-Content $VmxPath -Encoding UTF8
-    $out = foreach ($l in $text) {
+    $out = @(foreach ($l in $text) {
         if ($l -match '^sata0:[123]\.') { continue }
         $l
-    }
+    })
+    $out += @(
+        'sata0:1.present = "TRUE"'
+        'sata0:1.deviceType = "cdrom-raw"'
+        'sata0:1.fileName = "auto detect"'
+        'sata0:1.autodetect = "TRUE"'
+        'sata0:1.startConnected = "FALSE"'
+    )
     Write-LabTextNoBom $VmxPath (($out -join "`r`n") + "`r`n")
 }
 
@@ -408,6 +428,37 @@ function New-LabVm {
     Set-LabState "vm_$($Vm.Name)" $info
     Write-Ok "$($Vm.Name) 完成"
     return $info
+}
+
+function Invoke-LabGuestProgram($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Program, [string[]]$ArgList = @(), [int]$TimeoutSec = 600) {
+    <#
+      用 vmrun runProgramInGuest 在 VM 裡跑一支程式。回傳 $true/$false；逾時會砍掉 vmrun 不會一直卡住。
+      程式的參數要一個一個分開、不能加引號：vmrun 會把一個帶引號的字串當成「一個」參數傳進 VM，
+      net.exe、powershell.exe 收到就會直接 exit 1。
+    #>
+    foreach ($a in $ArgList) { if ($a -match '[\s"]') { throw "VM 裡的程式參數不能有空白或雙引號：$a" } }
+    $q = { param($x) '"' + ($x -replace '"', '\"') + '"' }
+    $argLine = "-T ws -gu $(& $q $User) -gp $(& $q $Password) runProgramInGuest $(& $q $Vmx) $(& $q $Program) $($ArgList -join ' ')"
+    $p = Start-Process -FilePath $VMware.Vmrun -ArgumentList $argLine -NoNewWindow -PassThru
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        try { $p.Kill() } catch { }
+        Write-Note "逾時（$TimeoutSec 秒）"
+        return $false
+    }
+    return ($p.ExitCode -eq 0)
+}
+
+function Invoke-LabGuestPs($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Script, [int]$TimeoutSec = 600) {
+    <# 在 VM 裡跑一段 PowerShell（用 -EncodedCommand，腳本內容不用跳脫）。 #>
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+    $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    return (Invoke-LabGuestProgram $VMware $Vmx $User $Password $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc) $TimeoutSec)
+}
+
+function Get-LabToolsState($VMware, [string]$Vmx) {
+    <# running / installed / notInstalled / unknown #>
+    $out = & $VMware.Vmrun -T ws checkToolsState $Vmx 2>&1
+    return ("$out").Trim()
 }
 
 Export-ModuleMember -Function *
