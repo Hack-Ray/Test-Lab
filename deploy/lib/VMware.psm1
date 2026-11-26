@@ -410,4 +410,24 @@ function New-LabVm {
     return $info
 }
 
+function Invoke-LabGuestPs($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Script, [int]$TimeoutSec = 600) {
+    <# 用 vmrun runProgramInGuest 在 VM 裡跑 PowerShell。回傳 $true/$false；逾時會砍掉 vmrun 不會一直卡住。 #>
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+    $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $argLine = "-T ws -gu `"$User`" -gp `"$($Password -replace '"', '\"')`" runProgramInGuest `"$Vmx`" `"$ps`" `"-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc`""
+    $p = Start-Process -FilePath $VMware.Vmrun -ArgumentList $argLine -NoNewWindow -PassThru
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        try { $p.Kill() } catch { }
+        Write-Note "逾時（$TimeoutSec 秒）"
+        return $false
+    }
+    return ($p.ExitCode -eq 0)
+}
+
+function Get-LabToolsState($VMware, [string]$Vmx) {
+    <# running / installed / notInstalled / unknown #>
+    $out = & $VMware.Vmrun -T ws checkToolsState $Vmx 2>&1
+    return ("$out").Trim()
+}
+
 Export-ModuleMember -Function *

@@ -25,14 +25,6 @@ $Secrets = Get-LabSecrets $Config
 $VMware = Find-LabVMware
 if (-not $VMware) { throw '找不到 VMware Workstation' }
 
-$ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-
-function Invoke-InGuest([string]$Vmx, [string]$User, [string]$Password, [string]$Script) {
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
-    & $VMware.Vmrun -T ws -gu $User -gp $Password runProgramInGuest $Vmx $ps "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" 2>&1 | Out-Null
-    return $LASTEXITCODE
-}
-
 $adminScript = @'
 Set-TimeZone -Id 'Taipei Standard Time'
 $rel = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Reliability'
@@ -58,13 +50,15 @@ foreach ($vm in $Config.VMs) {
     if (-not $s) { Write-Note "$($vm.Name) 還沒建立，跳過"; continue }
     Write-Step "$($vm.Name)"
     if (-not (Test-LabVmRunning $VMware $s.Vmx)) { Write-Note '沒開機，跳過（先從 Portal 或 VMware 開機）'; continue }
-    Write-Info '系統設定（Install-Language 要下載語言套件，可能要幾分鐘）…'
-    if ((Invoke-InGuest $s.Vmx 'Administrator' $Secrets.AdminPassword $adminScript) -ne 0) {
+    $tools = Get-LabToolsState $VMware $s.Vmx
+    if ($tools -ne 'running') { Write-Note "VMware Tools 狀態是 $tools（要 running 才能從主機操作），跳過"; continue }
+    Write-Info '系統設定（Install-Language 要下載語言套件，最多等 20 分鐘）…'
+    if (-not (Invoke-LabGuestPs $VMware $s.Vmx 'Administrator' $Secrets.AdminPassword $adminScript 1200)) {
         Write-Note '執行失敗：VM 裡可能沒有 VMware Tools，或 Administrator 密碼不對。可以改照手冊手動設定'
         continue
     }
     Write-Ok '時區、中文、關機原因視窗已設定'
-    if ((Invoke-InGuest $s.Vmx $Config.TesterUser $Secrets.TesterPassword $userScript) -eq 0) { Write-Ok "$($Config.TesterUser) 已加上注音" }
+    if (Invoke-LabGuestPs $VMware $s.Vmx $Config.TesterUser $Secrets.TesterPassword $userScript 300) { Write-Ok "$($Config.TesterUser) 已加上注音" }
     else { Write-Note "$($Config.TesterUser) 的輸入法沒設成功（帳號可能還沒登入過），之後在 VM 裡 Settings → Language 加中文(台灣)" }
     if (-not $NoRestart) {
         & $VMware.Vmrun -T ws -gu Administrator -gp $Secrets.AdminPassword runProgramInGuest $s.Vmx -noWait 'C:\Windows\System32\shutdown.exe' '/r /t 5 /d p:0:0' 2>&1 | Out-Null

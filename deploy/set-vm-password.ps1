@@ -43,8 +43,6 @@ $script = @"
 `$sec = ConvertTo-SecureString `$pw -AsPlainText -Force
 Set-LocalUser -Name '$account' -Password `$sec
 "@
-$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-$ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 $okCount = 0; $failed = @()
 foreach ($vm in $Config.VMs) {
@@ -52,8 +50,11 @@ foreach ($vm in $Config.VMs) {
     $s = Get-LabStateValue "vm_$($vm.Name)"
     if (-not $s) { continue }
     if (-not (Test-LabVmRunning $VMware $s.Vmx)) { Write-Note "$($vm.Name) 沒開機，跳過"; $failed += $vm.Name; continue }
-    & $VMware.Vmrun -T ws -gu Administrator -gp $Secrets.AdminPassword runProgramInGuest $s.Vmx $ps "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
+    Write-Info "$($vm.Name)：檢查 VMware Tools…"
+    $tools = Get-LabToolsState $VMware $s.Vmx
+    if ($tools -ne 'running') { Write-Note "$($vm.Name)：VMware Tools 狀態是 $tools（要 running 才能從主機操作），跳過"; $failed += $vm.Name; continue }
+    Write-Info "$($vm.Name)：改密碼中…"
+    if (Invoke-LabGuestPs $VMware $s.Vmx 'Administrator' $Secrets.AdminPassword $script 120) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
     else { Write-Note "$($vm.Name)：失敗（VM 裡沒有 VMware Tools，或目前記錄的 Administrator 密碼不對）"; $failed += $vm.Name }
 }
 
