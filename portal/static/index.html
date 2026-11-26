@@ -156,7 +156,7 @@ function allocActions(a) {
   let h = "";
   if (a.status === "ready" && a.rdp_url) h += `<a href="${esc(a.rdp_url)}" target="_blank" rel="noopener">開啟遠端桌面</a> `;
   if (a.status === "starting" || a.status === "ready") h += `<button class="secondary" onclick="release(${a.id})">釋放</button>`;
-  if (a.status === "failed") h += `<span class="muted">${esc(a.note)}</span>`;
+  if ((a.status === "failed" || a.status === "starting") && a.note) h += `<span class="muted">${esc(a.note)}</span>`;
   return h;
 }
 

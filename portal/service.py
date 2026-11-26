@@ -348,16 +348,21 @@ class Portal:
             except DriverError:
                 results[vm.name] = {p: False for p in vm.ports}
         if all(all(r.values()) for r in results.values()):
-            self.db.execute("UPDATE allocations SET status='ready', ready_at=? WHERE id=?",
+            self.db.execute("UPDATE allocations SET status='ready', ready_at=?, note=NULL WHERE id=?",
                             (self.now().isoformat(timespec="seconds"), alloc_id))
             self.audit(a["email"], "ready", alloc=alloc_id, vm=a["vm"])
         else:
+            failed = {n: [p for p, ok in r.items() if not ok] for n, r in results.items()}
+            failed = {n: ps for n, ps in failed.items() if ps}
             created = datetime.fromisoformat(a["created_at"])
             limit = float(self.cfg.portal.get("health_timeout_seconds", 600))
             if (self.now() - created).total_seconds() > limit:
-                failed = {n: [p for p, ok in r.items() if not ok] for n, r in results.items()}
                 self._end_alloc(alloc_id, "failed", json.dumps(failed))
                 self.audit(a["email"], "health_timeout", alloc=alloc_id, failed=failed)
+            else:
+                # 等待中也記下還不通的 port，畫面上看得到卡在哪
+                note = "等待連線：" + "、".join(f"{n} port {','.join(map(str, ps))}" for n, ps in failed.items())
+                self.db.execute("UPDATE allocations SET note=? WHERE id=?", (note, alloc_id))
         return self.allocation(alloc_id)
 
     def process_pending(self) -> None:
