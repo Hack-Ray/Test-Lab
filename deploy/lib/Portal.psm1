@@ -1,4 +1,4 @@
-# 安裝 Portal：Python、venv、產生 portal.toml、註冊開機（登入）自動啟動。
+﻿# 安裝 Portal：Python、venv、產生 portal.toml、註冊開機（登入）自動啟動。
 # 相容 Windows PowerShell 5.1。
 
 function Find-LabPython {
