@@ -1,4 +1,4 @@
-﻿# 安裝 Portal：Python、venv、產生 portal.toml、註冊開機（登入）自動啟動。
+# 安裝 Portal：Python、venv、產生 portal.toml、註冊開機（登入）自動啟動。
 # 相容 Windows PowerShell 5.1。
 
 function Find-LabPython {
@@ -67,11 +67,15 @@ function New-LabPortalToml {
         $L.Add('api_token_file = ' + (ConvertTo-TomlString $TokenFile))
     } else { $L.Add('enabled = false') }
     $L.Add('')
-    $L.Add('# 遠端桌面共用測試帳號：Portal 顯示帳號、幫使用者複製密碼（密碼每次從 secrets.json 讀）')
+    $L.Add('# 遠端桌面測試帳號：Portal 在「我的分配」顯示帳號與密碼（共用密碼每次從 secrets.json 讀）')
     $L.Add('[rdp]')
     $L.Add('username = ' + (ConvertTo-TomlString $Config.TesterUser))
     $L.Add('secrets_file = ' + (ConvertTo-TomlString (Join-Path (Split-Path -Parent $PSScriptRoot) '.state\secrets.json')))
     $L.Add('secrets_key = "TesterPassword"')
+    $L.Add('# 每次分配 client 時換一組一次性密碼，釋放時換回共用密碼（需要 VM 裡有 VMware Tools）')
+    $L.Add('one_time_password = true')
+    $L.Add('admin_user = "Administrator"')
+    $L.Add('admin_key = "AdminPassword"')
     $L.Add('')
     $L.Add('[driver]')
     $L.Add('type = "vmrun"')

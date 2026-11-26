@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import os
+import base64
 import subprocess
 import threading
 import time
 
 from .base import DriverError, PowerState, VMDriver, VMSpec
 
+POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 DEFAULT_VMRUN = r"C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe"
 
 
@@ -83,6 +85,19 @@ class VmrunDriver(VMDriver):
             return
         self._run("stop", self._vmx(vm), "soft")
         self._invalidate()
+
+    def set_guest_password(self, vm: VMSpec, admin_user: str, admin_password: str,
+                           user: str, new_password: str) -> None:
+        # 密碼用 base64 帶進去，避免引號、符號在命令列被吃掉；需要 VM 裡有 VMware Tools
+        pw = base64.b64encode(new_password.encode("utf-8")).decode()
+        script = (
+            f"$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pw}'));"
+            f"Set-LocalUser -Name '{user}' -Password (ConvertTo-SecureString $p -AsPlainText -Force)"
+        )
+        enc = base64.b64encode(script.encode("utf-16-le")).decode()
+        cmd_auth = ["-gu", admin_user, "-gp", admin_password]
+        self._run(*cmd_auth, "runProgramInGuest", self._vmx(vm), POWERSHELL,
+                  f"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}", timeout=60)
 
     def status(self, vm: VMSpec) -> PowerState:
         try:

@@ -81,10 +81,6 @@
       <button id="wakeBtn">喚醒並連線</button>
     </div>
     <div id="msg" class="muted" style="margin-top:8px"></div>
-    <div id="credBox" class="muted hidden" style="margin-top:8px">
-      遠端桌面登入帳號 <code id="credUser"></code>，密碼按「喚醒並連線」或「開啟遠端桌面」時會自動複製，到登入畫面按 Ctrl+V 貼上。
-      <button class="secondary" id="copyPwBtn">再複製一次密碼</button>
-    </div>
   </section>
 
   <section>
@@ -158,7 +154,11 @@ function table(el, cols, rows) {
 
 function allocActions(a) {
   let h = "";
-  if (a.status === "ready" && a.rdp_url) h += `<a href="${esc(a.rdp_url)}" target="_blank" rel="noopener" onclick="copyPw()">開啟遠端桌面</a> `;
+  if (a.status === "ready" && a.rdp_password) {
+    pwById[a.id] = a.rdp_password;
+    h += `帳號 <code>${esc(a.rdp_user || "")}</code> 密碼 <code>${esc(a.rdp_password)}</code> <button class="secondary" onclick="copyPw(${a.id})">複製密碼</button> `;
+  }
+  if (a.status === "ready" && a.rdp_url) h += `<a href="${esc(a.rdp_url)}" target="_blank" rel="noopener" onclick="copyPw(${a.id})">開啟遠端桌面</a> `;
   if (a.status === "starting" || a.status === "ready") h += `<button class="secondary" onclick="release(${a.id})">釋放</button>`;
   if ((a.status === "failed" || a.status === "starting") && a.note) h += `<span class="muted">${esc(a.note)}</span>`;
   return h;
@@ -311,19 +311,14 @@ async function loadPrewarm() {
   $("pwStart").value = p.start; $("pwEnd").value = p.end; $("pwMax").value = p.max_running;
 }
 
-let creds = null;
-async function loadCreds() {
-  try { creds = await api("/api/rdp-credentials"); } catch { creds = null; }
-  $("credBox").classList.toggle("hidden", !creds);
-  if (creds) $("credUser").textContent = creds.username;
-}
-window.copyPw = () => {
-  if (!creds || !navigator.clipboard) return;
-  navigator.clipboard.writeText(creds.password).then(
-    () => { $("msg").textContent = `密碼已複製，登入畫面帳號填 ${creds.username}，密碼按 Ctrl+V`; },
+const pwById = {};
+window.copyPw = (id) => {
+  const pw = pwById[id];
+  if (!pw || !navigator.clipboard) return;
+  navigator.clipboard.writeText(pw).then(
+    () => { $("msg").textContent = "密碼已複製，到遠端桌面登入畫面按 Ctrl+V 貼上"; },
     () => {});
 };
-$("copyPwBtn").onclick = () => copyPw();
 
 // 先開好分頁（瀏覽器只允許在點擊當下開新分頁），等 VM 準備好再把它導到遠端桌面
 function waitingTab() {
@@ -334,10 +329,24 @@ function waitingTab() {
   tab.document.body.innerHTML = "<h2>正在準備測試環境…</h2><p id='s'>VM 沒開機的話要等 1–3 分鐘，好了會自動連線。這個分頁不要關。</p>";
   return tab;
 }
+// 就緒：在等待分頁顯示帳密，按按鈕複製密碼再連線（複製剪貼簿一定要使用者按一下）
+function readyTab(tab, a) {
+  if (!a.rdp_password) { tab.location = a.rdp_url; return; }
+  tabSay(tab, `<b>${esc(a.vm)}</b> 已就緒。<br>登入帳號 <code style="font-size:1.2em">${esc(a.rdp_user || "")}</code>　` +
+    `密碼 <code style="font-size:1.2em">${esc(a.rdp_password)}</code><br>` +
+    `<button id="go" style="font-size:1.1em;padding:8px 16px;margin-top:12px">複製密碼並連線</button>` +
+    `<br><small>到登入畫面帳號打 ${esc(a.rdp_user || "")}，密碼按 Ctrl+V。忘了的話回 Portal「我的分配」可以再複製。</small>`);
+  try {
+    tab.document.querySelector("h2").textContent = "測試環境已就緒";
+    tab.document.getElementById("go").onclick = () => {
+      const go = () => { tab.location = a.rdp_url; };
+      (tab.navigator.clipboard ? tab.navigator.clipboard.writeText(a.rdp_password) : Promise.reject()).then(go, go);
+    };
+  } catch { tab.location = a.rdp_url; }
+}
 function tabSay(tab, html) { try { tab.document.getElementById("s").innerHTML = html; } catch {} }
 
 $("wakeBtn").onclick = async () => {
-  copyPw();
   const tab = waitingTab();
   $("msg").textContent = "喚醒中…（VM 沒開機的話要等開機與健康檢查，好了會自動開啟遠端桌面）";
   try {
@@ -351,8 +360,8 @@ $("wakeBtn").onclick = async () => {
       a = await api(`/api/allocations/${a.id}`);
     }
     if (a.status === "ready" && a.rdp_url) {
-      $("msg").textContent = creds ? `${a.vm} 已就緒，已開啟遠端桌面。帳號 ${creds.username}，密碼按 Ctrl+V 貼上` : `${a.vm} 已就緒，已開啟遠端桌面`;
-      if (tab && !tab.closed) tab.location = a.rdp_url; else window.open(a.rdp_url, "_blank");
+      $("msg").textContent = `${a.vm} 已就緒。帳號密碼在「我的分配」，忘了可以回來複製`;
+      if (tab && !tab.closed) readyTab(tab, a); else window.open(a.rdp_url, "_blank");
     } else {
       const why = a.status === "failed" ? `啟動失敗：${a.note || ""}` : `狀態 ${a.status}`;
       $("msg").innerHTML = `<span class="err">${esc(why)}</span>`;
@@ -403,7 +412,7 @@ async function start() {
     if (w.status !== "active") { await showRequestPage(w); return; }
     $("requestSection").classList.add("hidden");
     $("appBody").classList.remove("hidden");
-    await loadMe(); await loadCreds(); await loadPrewarm(); await loadUsers(); await refresh();
+    await loadMe(); await loadPrewarm(); await loadUsers(); await refresh();
     if (!timer) timer = setInterval(refresh, 5000);
   } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }

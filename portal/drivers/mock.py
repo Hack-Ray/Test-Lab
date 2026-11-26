@@ -20,6 +20,7 @@ class MockDriver(VMDriver):
         self._started_at: dict[str, float] = {}
         self._lock = threading.Lock()
         self.calls: list[tuple[str, str]] = []  # 測試用：記錄呼叫
+        self.passwords: dict[tuple[str, str], str] = {}  # 測試用：(vm, user) → 密碼
 
     def start(self, vm: VMSpec) -> None:
         with self._lock:
@@ -43,6 +44,12 @@ class MockDriver(VMDriver):
         started = self._started_at.get(vm.name)
         ok = started is not None and self.clock() - started >= self.boot_seconds
         return {p: ok for p in vm.ports}
+
+    def set_guest_password(self, vm, admin_user, admin_password, user, new_password):
+        from .base import DriverError
+        if vm.name not in self._started_at:
+            raise DriverError(f"{vm.name} 沒開機")
+        self.passwords[(vm.name, user)] = new_password
 
     # 測試用：模擬 Windows 閒置自動關機
     def simulate_guest_shutdown(self, name: str) -> None:

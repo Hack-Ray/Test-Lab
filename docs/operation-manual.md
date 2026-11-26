@@ -189,8 +189,8 @@ token 會存在 `C:\TestLab\secrets\cf_api_token.txt`（只有你的帳號能讀
 2. 出現 Cloudflare 登入頁 → 輸入你的 email → 收信拿驗證碼登入
    - 如果登入頁沒有「寄驗證碼」的選項：到 Zero Trust → Settings → Authentication → Login methods → Add new → **One-time PIN**
 3. 進到 Portal，右上角應該顯示你的 email（SA）
-4. 喚醒 client：選銀行 →「Client」→ **喚醒**。狀態會從 `starting` 變成 `ready`（VM 沒開機的話要 2–5 分鐘）
-5. 按 **開啟遠端桌面** → 瀏覽器裡出現 Windows 登入畫面
+4. 喚醒 client：選銀行 →「Client」→ **喚醒並連線**。會先開一個「正在準備」分頁（VM 沒開機的話要 2–5 分鐘）
+5. 就緒後分頁會顯示帳號（tester）和這次的**一次性密碼**，按「複製密碼並連線」→ 登入畫面帳號打 tester、密碼按 Ctrl+V。密碼也會顯示在 Portal「我的分配」，可以再複製；釋放後這組密碼就失效
    - 使用者名稱：`.\tester`（前面的 `.\` 代表本機帳號）
    - 密碼：`secrets.json` 的 `TesterPassword`
 6. 看到 Windows 桌面就成功了
