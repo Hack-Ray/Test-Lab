@@ -65,9 +65,12 @@ function Initialize-LabCfToken([string]$TokenFile) {
 # ---- 查詢小工具 ----------------------------------------------------------------
 function Find-CfItem($Items, [scriptblock]$Where) { return @($Items | Where-Object $Where) | Select-Object -First 1 }
 
-function Get-LabCfAccount {
-    $accounts = @(Invoke-Cf GET '/accounts?per_page=50')
-    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號，請確認 token 的 Account policy 有包含你的帳號' }
+function Get-LabCfAccount($Zone) {
+    # 先用 zone 帶的帳號（只要 Zone Read 就看得到），不必依賴 Account Settings: Read
+    if ($Zone -and $Zone.account -and $Zone.account.id) { return $Zone.account }
+    $accounts = @()
+    try { $accounts = @(Invoke-Cf GET '/accounts?per_page=50') } catch { Write-Note $_ }
+    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號：請編輯 token，權限加上 Account → Account Settings → Read，且 Account policy 包含你的帳號' }
     if ($accounts.Count -eq 1) { return $accounts[0] }
     for ($i = 0; $i -lt $accounts.Count; $i++) { Write-Info ("[{0}] {1}" -f $i, $accounts[$i].name) }
     return $accounts[[int](Read-Host '選擇要用的帳號編號')]
@@ -244,8 +247,8 @@ function Invoke-LabCloudflareSetup {
     <# 回傳 Portal 需要的 Cloudflare 設定值。 #>
     param($Config, $Vms, $Net, [string]$TokenFile)
     Initialize-LabCfToken $TokenFile
-    $acct = Get-LabCfAccount
     $zone = Get-LabCfZone $Config.Zone
+    $acct = Get-LabCfAccount $zone
     $team = Get-LabCfTeamDomain $acct.id
     Write-Ok "帳號 $($acct.name)、zone $($zone.name)、team $team"
 

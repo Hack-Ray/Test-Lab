@@ -283,6 +283,7 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 | 「找不到 VMware NAT 網卡（VMnet8）」 | 開 VMware → Edit → Virtual Network Editor → Change Settings → 確認 VMnet8 是 NAT，遮罩 255.255.255.0 |
 | VM 安裝超過 90 分鐘沒完成 | 在 VMware 打開那台 VM 看畫面。常見：ISO 檔不完整（刪掉重下載）、`ImageIndex` 選到 Core 版（要用 2 或 4）。處理後刪掉 `C:\TestLab\VMs\<名稱>` 資料夾再重跑 |
 | 貼上 token 時一次只能貼一個字 | 舊版腳本用隱藏輸入，Windows PowerShell 5.1 不支援整段貼上。更新到新版（改成從剪貼簿讀取），或先在同一個視窗設定 `$env:CF_API_TOKEN = '你的token'` 再重跑 |
+| 「token 看不到任何帳號」 | token 少了 Account Settings: Read。到 API Tokens 編輯這把 token 補上這項權限（token 字串不變，不用重貼），再跑 `-Stage Cloudflare`。新版腳本會改從網域找帳號，通常不會再遇到 |
 | Cloudflare「token 無效」 | token 複製不完整或權限不夠，照 4.3 重建 |
 | Cloudflare「看不到 zone」 | token 的 Zone policy（舊版叫 Zone Resources）沒包含 `hackray.dev` |
 | 開 `lab.hackray.dev` 顯示 502 / 1033 | Portal 或 cloudflared 沒在跑。看 `services.msc` 的 cloudflared 是否「執行中」；Portal 看 `C:\TestLab\data\portal.log` |
