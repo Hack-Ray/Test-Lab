@@ -10,7 +10,7 @@ $script:TokenPermissions = @(
     'Account → Access: Organizations, Identity Providers, and Groups → Edit',
     'Account → Zero Trust → Edit（建立 RDP 目標用）',
     'Account → Account Settings → Read',
-    'Zone → DNS → Edit（Zone Resources 選你的網域）',
+    'Zone → DNS → Edit',
     'Zone → Zone → Read'
 )
 
@@ -44,7 +44,8 @@ function Initialize-LabCfToken([string]$TokenFile) {
                 '開 https://dash.cloudflare.com/profile/api-tokens → Create Token → Create Custom Token',
                 '名稱填 test-lab-deploy，權限加這幾項：'
             ) + ($script:TokenPermissions | ForEach-Object { "    $_" }) + @(
-                'Account Resources 選你的帳號；建立後複製 token（只會顯示一次）'
+                'Account policy 的 Include 選你的帳號；Zone policy 的 Include 選 Specific zone → 你的網域（舊版畫面叫 Account / Zone Resources）',
+                '建立後複製 token（只會顯示一次）'
             ))
             $script:CfToken = Read-LabSecret '貼上 API token'
         }
@@ -66,7 +67,7 @@ function Find-CfItem($Items, [scriptblock]$Where) { return @($Items | Where-Obje
 
 function Get-LabCfAccount {
     $accounts = @(Invoke-Cf GET '/accounts?per_page=50')
-    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號，請確認 Account Resources 有選到你的帳號' }
+    if ($accounts.Count -eq 0) { throw 'token 看不到任何帳號，請確認 token 的 Account policy 有包含你的帳號' }
     if ($accounts.Count -eq 1) { return $accounts[0] }
     for ($i = 0; $i -lt $accounts.Count; $i++) { Write-Info ("[{0}] {1}" -f $i, $accounts[$i].name) }
     return $accounts[[int](Read-Host '選擇要用的帳號編號')]
@@ -74,7 +75,7 @@ function Get-LabCfAccount {
 
 function Get-LabCfZone([string]$Zone) {
     $z = Find-CfItem (Invoke-Cf GET "/zones?name=$Zone") { $_.name -eq $Zone }
-    if (-not $z) { throw "token 看不到 zone $Zone。請確認網域已加入 Cloudflare，且 token 的 Zone Resources 有包含它" }
+    if (-not $z) { throw "token 看不到 zone $Zone。請確認網域已加入 Cloudflare，且 token 的 Zone policy 有包含它" }
     return $z
 }
 

@@ -121,7 +121,7 @@ Cloudflare Access（登入驗證）──► cloudflared（裝在筆電上）
 
 1. 開 <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → 最下面 **Create Custom Token** → Get started
 2. Token name：`test-lab-deploy`
-3. Permissions 按 **+ Add more**，加這 7 項：
+3. 勾選這 7 項權限：類別是 Account 的在 **Account policy** 區塊勾，Zone 的在 **Zone policy** 區塊勾（可以用「Search for permission groups」搜尋名稱）。舊版畫面則是在 Permissions 按 **+ Add more** 一項一項加：
 
    | 類別 | 項目 | 權限 |
    |---|---|---|
@@ -133,7 +133,11 @@ Cloudflare Access（登入驗證）──► cloudflared（裝在筆電上）
    | Zone | DNS | Edit |
    | Zone | Zone | Read |
 
-4. Account Resources：Include → 你的帳號；Zone Resources：Include → Specific zone → `hackray.dev`
+4. 指定這組 token 能用在哪裡（新版畫面把權限分成兩個區塊，各自最上面有一列 **Include** 下拉）：
+   - **Account policy** 區塊：Include → 選你的帳號（或 All accounts）
+   - **Zone policy** 區塊：Include → **Specific zone** → `hackray.dev`（選 All zones 也能用，但範圍比較大）
+
+   > 舊版畫面叫做「Account Resources」和「Zone Resources」，在權限清單下方，意思一樣。
 5. Continue to summary → Create Token，**複製 token**（只會顯示一次）
 6. 回到 PowerShell 貼上（畫面不會顯示字元，貼上後按 Enter）
 
@@ -276,7 +280,7 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 | 「找不到 VMware NAT 網卡（VMnet8）」 | 開 VMware → Edit → Virtual Network Editor → Change Settings → 確認 VMnet8 是 NAT，遮罩 255.255.255.0 |
 | VM 安裝超過 90 分鐘沒完成 | 在 VMware 打開那台 VM 看畫面。常見：ISO 檔不完整（刪掉重下載）、`ImageIndex` 選到 Core 版（要用 2 或 4）。處理後刪掉 `C:\TestLab\VMs\<名稱>` 資料夾再重跑 |
 | Cloudflare「token 無效」 | token 複製不完整或權限不夠，照 4.3 重建 |
-| Cloudflare「看不到 zone」 | token 的 Zone Resources 沒選到 `hackray.dev` |
+| Cloudflare「看不到 zone」 | token 的 Zone policy（舊版叫 Zone Resources）沒包含 `hackray.dev` |
 | 開 `lab.hackray.dev` 顯示 502 / 1033 | Portal 或 cloudflared 沒在跑。看 `services.msc` 的 cloudflared 是否「執行中」；Portal 看 `C:\TestLab\data\portal.log` |
 | 登入後 Portal 顯示「不在權限表裡」 | 用來登入的 email 跟 SA 的 email 不一樣，或還沒被加入名單 |
 | 喚醒後一直 `starting`，最後 `failed` | server 的 AP / SQL port 沒開（見 6.3），或 VM 卡在開機。到 Portal 的稽核紀錄看 `health_timeout` 是哪個 port |
