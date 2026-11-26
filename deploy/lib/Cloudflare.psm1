@@ -47,7 +47,7 @@ function Initialize-LabCfToken([string]$TokenFile) {
                 'Account policy 的 Include 選你的帳號；Zone policy 的 Include 選 Specific zone → 你的網域（舊版畫面叫 Account / Zone Resources）',
                 '建立後複製 token（只會顯示一次）'
             ))
-            $script:CfToken = Read-LabSecret '貼上 API token'
+            $script:CfToken = Read-LabFromClipboard 'Cloudflare API token'
         }
         try {
             $v = Invoke-Cf GET '/user/tokens/verify'

@@ -139,7 +139,10 @@ Cloudflare Access（登入驗證）──► cloudflared（裝在筆電上）
 
    > 舊版畫面叫做「Account Resources」和「Zone Resources」，在權限清單下方，意思一樣。
 5. Continue to summary → Create Token，**複製 token**（只會顯示一次）
-6. 回到 PowerShell 貼上（畫面不會顯示字元，貼上後按 Enter）
+6. token 複製好之後，回到 PowerShell 按 Enter，腳本會從剪貼簿讀取（不會顯示在畫面上，讀完會清掉剪貼簿）
+
+   > 另一種方式：在執行 deploy.ps1 的同一個 PowerShell 視窗先輸入
+   > `$env:CF_API_TOKEN = '你的token'`，再執行 deploy.ps1，腳本就會直接使用。
 
 token 會存在 `C:\TestLab\secrets\cf_api_token.txt`（只有你的帳號能讀），之後重跑不用再輸入。
 
@@ -279,6 +282,7 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 | VMware 跳出 `No PCIe slot available for SCSI0` | 舊版腳本產生的 vmx 少了 PCIe 橋接設定。更新到新版後，在 VMware 關掉那台 VM 的分頁，重跑 deploy.ps1（會重新產生 vmx） |
 | 「找不到 VMware NAT 網卡（VMnet8）」 | 開 VMware → Edit → Virtual Network Editor → Change Settings → 確認 VMnet8 是 NAT，遮罩 255.255.255.0 |
 | VM 安裝超過 90 分鐘沒完成 | 在 VMware 打開那台 VM 看畫面。常見：ISO 檔不完整（刪掉重下載）、`ImageIndex` 選到 Core 版（要用 2 或 4）。處理後刪掉 `C:\TestLab\VMs\<名稱>` 資料夾再重跑 |
+| 貼上 token 時一次只能貼一個字 | 舊版腳本用隱藏輸入，Windows PowerShell 5.1 不支援整段貼上。更新到新版（改成從剪貼簿讀取），或先在同一個視窗設定 `$env:CF_API_TOKEN = '你的token'` 再重跑 |
 | Cloudflare「token 無效」 | token 複製不完整或權限不夠，照 4.3 重建 |
 | Cloudflare「看不到 zone」 | token 的 Zone policy（舊版叫 Zone Resources）沒包含 `hackray.dev` |
 | 開 `lab.hackray.dev` 顯示 502 / 1033 | Portal 或 cloudflared 沒在跑。看 `services.msc` 的 cloudflared 是否「執行中」；Portal 看 `C:\TestLab\data\portal.log` |

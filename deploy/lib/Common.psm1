@@ -27,6 +27,22 @@ function Wait-LabUser {
     [void](Read-Host '完成後按 Enter 繼續（Ctrl+C 可中止，之後重跑會從這一步接著做）')
 }
 
+function Read-LabFromClipboard([string]$What) {
+    <#
+      Windows PowerShell 5.1 的隱藏輸入（Read-Host -AsSecureString）不能整段貼上，
+      所以改成：使用者先複製，按 Enter 後從剪貼簿讀取。讀完清掉剪貼簿，不在畫面上顯示。
+    #>
+    while ($true) {
+        [void](Read-Host "請先複製 $What，回到這個視窗按 Enter（腳本會從剪貼簿讀取，不會顯示在畫面上）")
+        $v = (Get-Clipboard | Out-String).Trim().Trim("'", '"')
+        if ($v -and $v -notmatch '\s') {
+            try { Set-Clipboard -Value ' ' } catch { }
+            return $v
+        }
+        Write-Note "剪貼簿裡不是 $What（空的或含空白），請再複製一次"
+    }
+}
+
 function Read-LabSecret([string]$Prompt) {
     $sec = Read-Host -Prompt $Prompt -AsSecureString
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
