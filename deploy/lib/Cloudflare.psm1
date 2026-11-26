@@ -211,7 +211,6 @@ function Initialize-LabGroup([string]$AccountId, [string]$Name, [string]$AdminEm
 
 function Initialize-LabPolicy([string]$AccountId, [string]$Name, [string]$GroupId, [switch]$Rdp) {
     $p = Find-CfItem (Invoke-Cf GET "/accounts/$AccountId/access/policies?per_page=100") { $_.name -eq $Name }
-    if ($p) { Write-Ok "沿用 Access Policy $Name"; return $p.id }
     $body = @{ name = $Name; decision = 'allow'; include = @(@{ group = @{ id = $GroupId } }) }
     if ($Rdp) {
         # 剪貼簿：文字雙向可用（預設是全部禁止）
@@ -219,6 +218,12 @@ function Initialize-LabPolicy([string]$AccountId, [string]$Name, [string]$GroupI
             allowed_clipboard_local_to_remote_formats = @('text')
             allowed_clipboard_remote_to_local_formats = @('text')
         } }
+    }
+    if ($p) {
+        # 重跑時也把設定（例如剪貼簿）補回去
+        Invoke-Cf PUT "/accounts/$AccountId/access/policies/$($p.id)" $body | Out-Null
+        Write-Ok "更新 Access Policy $Name"
+        return $p.id
     }
     $p = Invoke-Cf POST "/accounts/$AccountId/access/policies" $body
     Write-Ok "建立 Access Policy $Name"
