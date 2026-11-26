@@ -33,6 +33,9 @@ while ($true) {
     $b = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($p2))
     if ($a -ne $b) { Write-Note '兩次不一樣，請重打'; continue }
     if ($a.Length -lt 8) { Write-Note '至少 8 碼'; continue }
+    $kinds = @('[A-Z]', '[a-z]', '[0-9]', '[^A-Za-z0-9]' | Where-Object { $a -cmatch $_ }).Count
+    if ($kinds -lt 3) { Write-Note 'Windows 要求大寫、小寫、數字、符號至少三種，例如 Lab@2026x'; continue }
+    if ($a -match [regex]::Escape($account)) { Write-Note "密碼不能包含帳號名稱 $account"; continue }
     break
 }
 
