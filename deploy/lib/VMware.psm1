@@ -322,12 +322,22 @@ function New-LabVmx {
 }
 
 function Remove-LabInstallMedia([string]$VmxPath) {
-    <# 安裝完拿掉 Windows ISO 和設定光碟（設定光碟裡有密碼）。 #>
+    <#
+      安裝完拿掉 Windows ISO 和設定光碟（設定光碟裡有密碼）。
+      保留一台空的光碟機（sata0:1），之後要掛 VMware Tools 或其他 ISO 才有地方放。
+    #>
     $text = Get-Content $VmxPath -Encoding UTF8
-    $out = foreach ($l in $text) {
+    $out = @(foreach ($l in $text) {
         if ($l -match '^sata0:[123]\.') { continue }
         $l
-    }
+    })
+    $out += @(
+        'sata0:1.present = "TRUE"'
+        'sata0:1.deviceType = "cdrom-raw"'
+        'sata0:1.fileName = "auto detect"'
+        'sata0:1.autodetect = "TRUE"'
+        'sata0:1.startConnected = "FALSE"'
+    )
     Write-LabTextNoBom $VmxPath (($out -join "`r`n") + "`r`n")
 }
 

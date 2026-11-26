@@ -127,13 +127,15 @@ Describe '無人值守安裝檔' {
         Get-LabToolsIso ([pscustomobject]@{ ToolsIso = $tmp }) 'C:\nowhere' | Should -Be $tmp
     }
 
-    It '安裝完拿掉光碟' {
+    It '安裝完拿掉光碟，留一台空光碟機' {
         $tmp = Join-Path ([IO.Path]::GetTempPath()) 'labtest.vmx'
         $vm = @{ Name = 'cli-01'; MemoryMB = 4096; Cpus = 2 }
         New-LabVmx -Vm $vm -DiskFile 'd.vmdk' -WindowsIso 'w' -SetupIso 's' -ToolsIso 't' | Set-Content $tmp
         Remove-LabInstallMedia $tmp
         $text = Get-Content $tmp -Raw
-        $text | Should -Not -Match 'sata0:[123]'
+        $text | Should -Not -Match 'sata0:[23]'
+        $text | Should -Not -Match 'cdrom-image'
+        $text | Should -Match 'sata0:1.deviceType = "cdrom-raw"'
         $text | Should -Match 'scsi0:0.fileName'
         $b = [IO.File]::ReadAllBytes($tmp)
         $b[0] | Should -Not -Be 0xEF   # 不能有 BOM
