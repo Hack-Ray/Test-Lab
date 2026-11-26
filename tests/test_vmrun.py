@@ -42,3 +42,13 @@ def test_vmrun_commands(monkeypatch):
 def test_vmrun_missing_binary():
     d = VmrunDriver(vmrun_path="/nonexistent/vmrun")
     assert d.status(VM) == PowerState.UNKNOWN
+
+
+def test_guest_program_args_are_separate_tokens(monkeypatch):
+    log: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", fake_run([], log))
+    d = VmrunDriver(vmrun_path="vmrun.exe", list_cache_seconds=0)
+    d.set_guest_password(VM, "Administrator", "Adm-1", "tester", "Lab@Test-99")
+    # vmrun 會把一整串當成一個參數傳進 VM，net.exe 會失敗，所以每個參數要分開
+    assert log[-1][-4:] == [r"C:\Windows\System32\net.exe", "user", "tester", "Lab@Test-99"]
+    assert log[-1][3:7] == ["-gu", "Administrator", "-gp", "Adm-1"]

@@ -206,7 +206,7 @@ class Provisioner:
 
         def tools_ready() -> bool:
             try:
-                driver.run_in_guest(spec, admin, admin_pw, "exit 0", timeout=60)
+                driver.run_program(spec, admin, admin_pw, r"C:\Windows\System32\cmd.exe", ["/c", "exit", "0"], timeout=60)
                 return True
             except DriverError:
                 return False

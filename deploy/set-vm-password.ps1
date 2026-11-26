@@ -36,16 +36,12 @@ while ($true) {
     $kinds = @('[A-Z]', '[a-z]', '[0-9]', '[^A-Za-z0-9]' | Where-Object { $a -cmatch $_ }).Count
     if ($kinds -lt 3) { Write-Note 'Windows 要求大寫、小寫、數字、符號至少三種，例如 Lab@2026x'; continue }
     if ($a -match [regex]::Escape($account)) { Write-Note "密碼不能包含帳號名稱 $account"; continue }
+    if ($a -match '[\s"]') { Write-Note '密碼不能有空白或雙引號'; continue }
     break
 }
 
-# 用 Administrator 的身分在 VM 裡改密碼；密碼用 base64 帶進去，避免引號、符號被吃掉
-$pwB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($a))
-$script = @"
-`$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$pwB64'))
-`$sec = ConvertTo-SecureString `$pw -AsPlainText -Force
-Set-LocalUser -Name '$account' -Password `$sec
-"@
+# 用 Administrator 的身分在 VM 裡直接跑 net.exe 改密碼（不經過 PowerShell）
+$net = 'C:\Windows\System32\net.exe'
 
 $okCount = 0; $failed = @()
 foreach ($vm in $Config.VMs) {
@@ -57,7 +53,7 @@ foreach ($vm in $Config.VMs) {
     $tools = Get-LabToolsState $VMware $s.Vmx
     if ($tools -ne 'running') { Write-Note "$($vm.Name)：VMware Tools 狀態是 $tools（要 running 才能從主機操作），跳過"; $failed += $vm.Name; continue }
     Write-Info "$($vm.Name)：改密碼中…"
-    if (Invoke-LabGuestPs $VMware $s.Vmx 'Administrator' $Secrets.AdminPassword $script 120) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
+    if (Invoke-LabGuestProgram $VMware $s.Vmx 'Administrator' $Secrets.AdminPassword $net @('user', $account, $a) 120) { Write-Ok "$($vm.Name)：$account 密碼已更新"; $okCount++ }
     else { Write-Note "$($vm.Name)：失敗（VM 裡沒有 VMware Tools，或目前記錄的 Administrator 密碼不對）"; $failed += $vm.Name }
 }
 

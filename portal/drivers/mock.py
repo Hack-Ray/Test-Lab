@@ -22,6 +22,7 @@ class MockDriver(VMDriver):
         self.calls: list[tuple[str, str]] = []  # 測試用：記錄呼叫
         self.passwords: dict[tuple[str, str], str] = {}  # 測試用：(vm, user) → 密碼
         self.guest_scripts: list[tuple[str, str, str]] = []
+        self.programs: list[tuple[str, str, str, str]] = []
 
     def start(self, vm: VMSpec) -> None:
         with self._lock:
@@ -45,6 +46,13 @@ class MockDriver(VMDriver):
         started = self._started_at.get(vm.name)
         ok = started is not None and self.clock() - started >= self.boot_seconds
         return {p: ok for p in vm.ports}
+
+    def run_program(self, vm, user, password, program, args=(), timeout=120):
+        from .base import DriverError
+        if vm.name not in self._started_at:
+            raise DriverError(f"{vm.name} 沒開機")
+        self.calls.append(("program", vm.name))
+        self.programs.append((vm.name, user, program, list(args)))
 
     def run_in_guest(self, vm, user, password, script, timeout=300):
         from .base import DriverError

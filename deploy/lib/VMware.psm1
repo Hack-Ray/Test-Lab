@@ -430,11 +430,15 @@ function New-LabVm {
     return $info
 }
 
-function Invoke-LabGuestPs($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Script, [int]$TimeoutSec = 600) {
-    <# 用 vmrun runProgramInGuest 在 VM 裡跑 PowerShell。回傳 $true/$false；逾時會砍掉 vmrun 不會一直卡住。 #>
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
-    $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-    $argLine = "-T ws -gu `"$User`" -gp `"$($Password -replace '"', '\"')`" runProgramInGuest `"$Vmx`" `"$ps`" `"-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc`""
+function Invoke-LabGuestProgram($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Program, [string[]]$ArgList = @(), [int]$TimeoutSec = 600) {
+    <#
+      用 vmrun runProgramInGuest 在 VM 裡跑一支程式。回傳 $true/$false；逾時會砍掉 vmrun 不會一直卡住。
+      程式的參數要一個一個分開、不能加引號：vmrun 會把一個帶引號的字串當成「一個」參數傳進 VM，
+      net.exe、powershell.exe 收到就會直接 exit 1。
+    #>
+    foreach ($a in $ArgList) { if ($a -match '[\s"]') { throw "VM 裡的程式參數不能有空白或雙引號：$a" } }
+    $q = { param($x) '"' + ($x -replace '"', '\"') + '"' }
+    $argLine = "-T ws -gu $(& $q $User) -gp $(& $q $Password) runProgramInGuest $(& $q $Vmx) $(& $q $Program) $($ArgList -join ' ')"
     $p = Start-Process -FilePath $VMware.Vmrun -ArgumentList $argLine -NoNewWindow -PassThru
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         try { $p.Kill() } catch { }
@@ -442,6 +446,13 @@ function Invoke-LabGuestPs($VMware, [string]$Vmx, [string]$User, [string]$Passwo
         return $false
     }
     return ($p.ExitCode -eq 0)
+}
+
+function Invoke-LabGuestPs($VMware, [string]$Vmx, [string]$User, [string]$Password, [string]$Script, [int]$TimeoutSec = 600) {
+    <# 在 VM 裡跑一段 PowerShell（用 -EncodedCommand，腳本內容不用跳脫）。 #>
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+    $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    return (Invoke-LabGuestProgram $VMware $Vmx $User $Password $ps @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc) $TimeoutSec)
 }
 
 function Get-LabToolsState($VMware, [string]$Vmx) {
