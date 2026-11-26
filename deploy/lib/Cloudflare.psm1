@@ -97,6 +97,20 @@ function Get-LabCfTeamDomain([string]$AccountId) {
     }
 }
 
+function Initialize-LabOtpIdp([string]$AccountId) {
+    # 讓沒有 GitHub / Cloudflare 帳號的同事也能用 email 收驗證碼登入
+    $idps = @()
+    try { $idps = @(Invoke-Cf GET "/accounts/$AccountId/access/identity_providers") } catch { Write-Note $_ }
+    if (Find-CfItem $idps { $_.type -eq 'onetimepin' }) { Write-Ok '登入方式 One-time PIN 已存在'; return }
+    try {
+        Invoke-Cf POST "/accounts/$AccountId/access/identity_providers" @{ name = 'One-time PIN'; type = 'onetimepin'; config = @{} } | Out-Null
+        Write-Ok '已加入登入方式 One-time PIN（email 驗證碼）'
+    } catch {
+        Write-Note "無法自動加入 One-time PIN：$_"
+        Write-Note '請到 Zero Trust → Settings → Authentication → Login methods → Add new → One-time PIN'
+    }
+}
+
 # ---- Tunnel ----------------------------------------------------------------------
 function Find-LabCloudflared {
     $cands = @(
@@ -274,6 +288,7 @@ function Invoke-LabCloudflareSetup {
     $acct = Get-LabCfAccount $zone
     $team = Get-LabCfTeamDomain $acct.id
     Write-Ok "帳號 $($acct.name)、zone $($zone.name)、team $team"
+    Initialize-LabOtpIdp $acct.id
 
     $tunnelId = Initialize-LabTunnel $acct.id 'test-lab' $Config.PortalHost
     $vnetId = Initialize-LabRoute $acct.id $tunnelId $Net.Cidr
