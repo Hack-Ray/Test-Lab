@@ -296,10 +296,13 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 
 Log 位置：
 
+- 部署過程：`C:\TestLab\logs\deploy-<日期時間>.log`（每跑一次一個檔）
 - 部署狀態：`deploy\.state\state.json`
 - Portal：`C:\TestLab\data\portal.log`
 - VM 內首次設定：VM 裡的 `C:\TestLab\setup-guest.log`
 - VM 內閒置判斷：VM 裡的 `C:\TestLab\idle-state.json`
+- cloudflared：Windows 事件檢視器 → Windows 記錄 → 應用程式，來源 cloudflared；或 `Get-WinEvent -ProviderName cloudflared -MaxEvents 30`
+- Portal 操作紀錄（誰申請、釋放、延長）：Portal → 稽核紀錄（SA 才看得到）
 
 ---
 

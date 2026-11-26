@@ -58,6 +58,10 @@ if (-not (Test-Path $ConfigPath)) {
     Write-Host "已建立設定檔 $ConfigPath（用預設值，要改網域或 VM 清單可以先中止去改）" -ForegroundColor Yellow
 }
 $Config = Import-PowerShellDataFile $ConfigPath
+$logDir = Join-Path $Config.InstallRoot 'logs'
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+$deployLog = Join-Path $logDir ("deploy-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+try { Start-Transcript -Path $deployLog | Out-Null } catch { }
 Initialize-LabState (Join-Path $here '.state')
 if (-not $Config.AdminEmail) {
     $saved = Get-LabStateValue 'AdminEmail'
@@ -154,3 +158,5 @@ Write-Host '  之後：'
 Write-Host '   - 新增使用者：Portal → 使用者管理（會自動同步 Cloudflare Access Group）'
 Write-Host '   - 要讓 Portal 在開機後自動跑，這台筆電要登入你的 Windows 帳號（可以設自動登入）'
 Write-Host '   - 改了 lab.config.psd1（例如加 VM）就重跑 deploy.ps1'
+Write-Host "  這次部署的紀錄：$deployLog"
+try { Stop-Transcript | Out-Null } catch { }
