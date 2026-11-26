@@ -75,7 +75,7 @@ $secretsDir = Join-Path $Config.InstallRoot 'secrets'
 New-Item -ItemType Directory -Path $secretsDir -Force | Out-Null
 Protect-LabPath $secretsDir
 $tokenFile = Join-Path $secretsDir 'cf_api_token.txt'
-$Secrets = Get-LabSecrets
+$Secrets = Get-LabSecrets $Config
 
 function Should-Run([string]$Name) { return ($Stage -eq 'All' -or $Stage -eq $Name) }
 

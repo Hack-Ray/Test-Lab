@@ -95,12 +95,20 @@ function Protect-LabPath([string]$Path) {
     } catch { Write-Note "無法設定 $Path 的權限：$_" }
 }
 
-function Get-LabSecrets {
+function Get-LabSecrets($Config) {
+    # 第一次產生：設定檔有填 AdminPassword / TesterPassword 就用，沒填就隨機
+    # 之後以 secrets.json 為準（VM 已用這組密碼建好）；要改已建好 VM 的密碼用 set-vm-password.ps1
     $path = Join-Path $script:StateDir 'secrets.json'
     if (Test-Path $path) { return (Get-Content $path -Raw -Encoding UTF8 | ConvertFrom-Json) }
-    $s = [pscustomobject]@{ AdminPassword = (New-LabPassword); TesterPassword = (New-LabPassword) }
-    $s | ConvertTo-Json | Set-Content -Path $path -Encoding UTF8
+    $admin = if ($Config -and $Config.AdminPassword) { $Config.AdminPassword } else { New-LabPassword }
+    $tester = if ($Config -and $Config.TesterPassword) { $Config.TesterPassword } else { New-LabPassword }
+    $s = [pscustomobject]@{ AdminPassword = $admin; TesterPassword = $tester }
+    Save-LabSecrets $s
     return $s
+}
+
+function Save-LabSecrets($Secrets) {
+    $Secrets | ConvertTo-Json | Set-Content -Path (Join-Path $script:StateDir 'secrets.json') -Encoding UTF8
 }
 
 # ---- 網路 -------------------------------------------------------------------

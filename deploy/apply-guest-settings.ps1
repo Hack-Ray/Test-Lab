@@ -21,7 +21,7 @@ foreach ($m in 'Common', 'VMware') { Import-Module (Join-Path $here "lib\$m.psm1
 if (-not $ConfigPath) { $ConfigPath = Join-Path $here 'lab.config.psd1' }
 $Config = Import-PowerShellDataFile $ConfigPath
 Initialize-LabState (Join-Path $here '.state')
-$Secrets = Get-LabSecrets
+$Secrets = Get-LabSecrets $Config
 $VMware = Find-LabVMware
 if (-not $VMware) { throw '找不到 VMware Workstation' }
 
