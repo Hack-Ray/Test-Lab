@@ -184,6 +184,15 @@ Describe 'portal.toml' {
         $t.banks[0].name | Should -Be '示範銀行 A'
     }
 
+    It '有網段時產生 [provision]（網頁新增主機用）' {
+        $net = [pscustomobject]@{ Prefix = '192.168.80'; PrefixLength = 24; Gateway = '192.168.80.2'; Dns = '192.168.80.2' }
+        $t = Read-Toml (New-LabPortalToml -Config $script:Cfg -Vms $script:Vms -Cf $script:Cf -InstallRoot 'C:\TestLab' -VmrunPath 'C:\VMware\vmrun.exe' -TokenFile 'x' -Net $net)
+        $t.provision.ip_prefix | Should -Be '192.168.80'
+        $t.provision.gateway | Should -Be '192.168.80.2'
+        $t.provision.vnet_id | Should -Be 'vnet-1'
+        $t.portal.extra_file | Should -Be 'C:\TestLab\data\extra.json'
+    }
+
     It '沒有 Cloudflare 時用 dev 模式' {
         $t = Read-Toml (New-LabPortalToml -Config $script:Cfg -Vms $script:Vms -Cf $null -InstallRoot 'C:\TestLab' -VmrunPath 'C:\VMware\vmrun.exe' -TokenFile 'x')
         $t.auth.mode | Should -Be 'dev'

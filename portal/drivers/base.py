@@ -5,6 +5,7 @@ Portal 只透過這個介面開關機、查狀態，所以換平台（VMware Wor
 """
 from __future__ import annotations
 
+import base64
 import socket
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -52,10 +53,20 @@ class VMDriver(ABC):
     def ip(self, vm: VMSpec) -> str | None:
         """回傳 VM 的 IP；還拿不到時回 None。"""
 
+    # ---- 選用功能：不支援的 driver 丟 DriverError ----
+    def run_in_guest(self, vm: VMSpec, user: str, password: str, script: str,
+                     timeout: float = 300) -> None:
+        """用 VM 裡的本機帳號執行一段 PowerShell（需要 guest tools）。"""
+        raise DriverError(f"{self.name} driver 不支援在 VM 裡執行程式")
+
+    def clone(self, src: VMSpec, snapshot: str, dst_path: str, name: str, linked: bool = True) -> str:
+        """從 src 的快照複製出一台新 VM，回傳新 VM 的識別（vmx 路徑等）。"""
+        raise DriverError(f"{self.name} driver 不支援複製 VM")
+
     def set_guest_password(self, vm: VMSpec, admin_user: str, admin_password: str,
                            user: str, new_password: str) -> None:
-        """在 VM 裡改本機帳號密碼（一次性密碼用）。不支援的 driver 丟 DriverError。"""
-        raise DriverError(f"{self.name} driver 不支援改 VM 密碼")
+        """在 VM 裡改本機帳號密碼（一次性密碼用）。"""
+        self.run_in_guest(vm, admin_user, admin_password, set_password_script(user, new_password), timeout=60)
 
     def health(self, vm: VMSpec, timeout: float = 2.0) -> dict[int, bool]:
         """對 vm.ports 逐一做 TCP 連線檢查（3389 / AP / SQL）。"""
@@ -63,6 +74,18 @@ class VMDriver(ABC):
         if not host:
             return {p: False for p in vm.ports}
         return {p: tcp_check(host, p, timeout) for p in vm.ports}
+
+
+def ps_literal(s: str) -> str:
+    """PowerShell 單引號字串。"""
+    return "'" + s.replace("'", "''") + "'"
+
+
+def set_password_script(user: str, password: str) -> str:
+    # 密碼用 base64 帶進去，避免引號、符號被吃掉
+    pw = base64.b64encode(password.encode("utf-8")).decode()
+    return (f"$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pw}'));"
+            f"Set-LocalUser -Name {ps_literal(user)} -Password (ConvertTo-SecureString $p -AsPlainText -Force)")
 
 
 def tcp_check(host: str, port: int, timeout: float = 2.0) -> bool:

@@ -109,6 +109,24 @@
     <div class="table-wrap"><table id="audit"></table></div>
   </section>
 
+  <section id="provSection" class="hidden">
+    <h2>新增主機（SA）</h2>
+    <div class="muted" id="provHint"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="pvName" placeholder="名稱，例如 cli-03" style="width:160px">
+      <select id="pvKind"><option value="client">Client</option><option value="server">Server</option></select>
+      <select id="pvBank"></select>
+      <span id="pvNewBank" class="hidden">
+        <input id="pvBankId" placeholder="銀行代碼，例如 demo-c" style="width:150px">
+        <input id="pvBankName" placeholder="銀行名稱" style="width:140px">
+      </span>
+      <input id="pvPorts" placeholder="檢查的 port，例如 3389,8080" value="3389" style="width:180px">
+      <button id="pvBtn">建立</button>
+    </div>
+    <div id="pvMsg" class="muted" style="margin-top:8px"></div>
+    <div class="table-wrap" style="margin-top:8px"><table id="pvJobs"></table></div>
+  </section>
+
   <section id="usersSection" class="hidden">
     <h2>待審核的權限申請（SA）</h2>
     <div class="table-wrap"><table id="requests"></table></div>
@@ -210,6 +228,7 @@ async function refresh() {
       table($("audit"), [
         ["時間", r => t(r.ts)], ["誰", r => esc(r.email)], ["動作", r => esc(r.action)], ["內容", r => `<code>${esc(r.detail)}</code>`],
       ], (await api("/api/audit")).slice(0, 50));
+      await loadProvision();
     }
   } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
@@ -302,6 +321,45 @@ $("reqBtn").onclick = async () => {
       role: $("reqRole").value, banks: checked("req"), reason: $("reqReason").value }) });
     await showRequestPage(await api("/api/whoami"));
   } catch (e) { $("reqMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+};
+
+async function loadProvision() {
+  if (!me.is_sa) return;
+  const p = await api("/api/provision");
+  $("provSection").classList.remove("hidden");
+  $("provHint").textContent = p.enabled
+    ? `從範本 VM 的 clean 快照複製（client 範本：${p.templates.client || "無"}，server 範本：${p.templates.server || "無"}），下一個 IP ${p.next_ip}。大約 5–15 分鐘，完成後會關機待命。`
+    : "portal.toml 還沒有 [provision] 設定，請重跑 deploy.ps1 -Stage Portal。";
+  const kind = $("pvKind").value;
+  const cur = $("pvBank").value;
+  $("pvBank").innerHTML = (kind === "client" ? `<option value="">共用（不分銀行）</option>` : "") +
+    allBanks.map(b => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("") +
+    `<option value="__new">＋ 新增銀行…</option>`;
+  if ([...$("pvBank").options].some(o => o.value === cur)) $("pvBank").value = cur;
+  $("pvNewBank").classList.toggle("hidden", $("pvBank").value !== "__new");
+  table($("pvJobs"), [
+    ["#", j => j.id], ["名稱", j => esc(j.name)], ["類型", j => j.kind], ["銀行", j => esc(j.bank_name || (j.bank ? bankName(j.bank) : "共用"))],
+    ["IP", j => esc(j.ip)], ["狀態", j => pill(j.status)], ["進度", j => esc(j.step || "")],
+    ["備註", j => j.error ? `<span class="${j.status === "failed" ? "err" : "muted"}">${esc(j.error)}</span>` : ""],
+  ], p.jobs.slice(0, 10));
+  return p;
+}
+$("pvKind").onchange = () => loadProvision();
+$("pvBank").onchange = () => $("pvNewBank").classList.toggle("hidden", $("pvBank").value !== "__new");
+$("pvBtn").onclick = async () => {
+  const isNew = $("pvBank").value === "__new";
+  const body = {
+    name: $("pvName").value.trim(), kind: $("pvKind").value,
+    bank: isNew ? $("pvBankId").value.trim() : ($("pvBank").value || null),
+    new_bank_name: isNew ? $("pvBankName").value.trim() : null,
+    ports: $("pvPorts").value.split(/[,\s]+/).filter(Boolean).map(Number),
+  };
+  try {
+    const j = await api("/api/provision", { method: "POST", body: JSON.stringify(body) });
+    $("pvMsg").textContent = `已開始建立 ${j.name}（${j.ip}），進度看下面的表格`;
+    $("pvName").value = "";
+  } catch (e) { $("pvMsg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  loadProvision();
 };
 
 async function loadPrewarm() {
@@ -412,7 +470,7 @@ async function start() {
     if (w.status !== "active") { await showRequestPage(w); return; }
     $("requestSection").classList.add("hidden");
     $("appBody").classList.remove("hidden");
-    await loadMe(); await loadPrewarm(); await loadUsers(); await refresh();
+    await loadMe(); await loadPrewarm(); await loadProvision(); await loadUsers(); await refresh();
     if (!timer) timer = setInterval(refresh, 5000);
   } catch (e) { $("msg").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }

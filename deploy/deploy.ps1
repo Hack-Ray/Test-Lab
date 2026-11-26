@@ -119,6 +119,21 @@ foreach ($v in $Vms) {
     if ($c) { $v.Ports = @($c.Ports) }
 }
 
+# Portal 網頁新增的銀行與主機（data\extra.json）：一起交給 Cloudflare 和 Portal，重跑部署不會弄丟
+$extraFile = Join-Path $Config.InstallRoot 'data\extra.json'
+if (Test-Path $extraFile) {
+    $extra = Get-Content $extraFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($b in @($extra.banks)) {
+        if ($b -and -not ($Config.Banks | Where-Object { $_.Id -eq $b.id })) { $Config.Banks += @{ Id = $b.id; Name = $b.name } }
+    }
+    foreach ($e in @($extra.vms)) {
+        if ($e -and -not ($Vms | Where-Object { $_.Name -eq $e.name })) {
+            $Vms += [pscustomobject]@{ Name = $e.name; Kind = $e.kind; Bank = $e.bank; Vmx = $e.vmx; Ip = $e.host; Ports = @($e.ports) }
+        }
+    }
+    Write-Info "含 Portal 新增的主機：$(@($extra.vms).Count) 台"
+}
+
 # ---- 3. Cloudflare ---------------------------------------------------------------
 Write-Step '3/4 Cloudflare Tunnel 與 Access'
 $Cf = Get-LabStateValue 'Cloudflare'
@@ -135,7 +150,7 @@ if ($SkipCloudflare) {
 Write-Step '4/4 Portal'
 if (Should-Run 'Portal') {
     Install-LabPortal -Config $Config -Vms $Vms -Cf $Cf -RepoRoot $repoRoot -InstallRoot $Config.InstallRoot `
-        -VmrunPath $VMware.Vmrun -TokenFile $tokenFile
+        -VmrunPath $VMware.Vmrun -TokenFile $tokenFile -Net $Net
 } else { Write-Info '跳過' }
 
 # ---- 完成 ---------------------------------------------------------------------------

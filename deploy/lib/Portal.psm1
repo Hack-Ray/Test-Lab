@@ -38,7 +38,7 @@ function New-LabPortalToml {
     <#
       $Cf 為 $null 時用 dev 模式（還沒接 Cloudflare 也能先在本機開 Portal）。
     #>
-    param($Config, $Vms, $Cf, [string]$InstallRoot, [string]$VmrunPath, [string]$TokenFile)
+    param($Config, $Vms, $Cf, [string]$InstallRoot, [string]$VmrunPath, [string]$TokenFile, $Net)
     $L = New-Object System.Collections.Generic.List[string]
     $L.Add('# 由 deploy.ps1 產生。重跑部署會覆蓋這個檔案；要長期保留的修改請改 deploy\lab.config.psd1。')
     $L.Add('[portal]')
@@ -47,6 +47,7 @@ function New-LabPortalToml {
     $L.Add('host = "127.0.0.1"')
     $L.Add('port = 8080')
     $L.Add('health_timeout_seconds = 900')
+    $L.Add('extra_file = ' + (ConvertTo-TomlString (Join-Path $InstallRoot 'data\extra.json')))   # Portal 網頁新增的銀行與主機
     $L.Add('')
     $L.Add('[auth]')
     if ($Cf) {
@@ -77,6 +78,24 @@ function New-LabPortalToml {
     $L.Add('admin_user = "Administrator"')
     $L.Add('admin_key = "AdminPassword"')
     $L.Add('')
+    if ($Net) {
+        $L.Add('# 從 Portal 網頁新增主機（SA）：從範本 VM 的 clean 快照複製')
+        $L.Add('[provision]')
+        $L.Add('vm_root = ' + (ConvertTo-TomlString $Config.VmRoot))
+        $L.Add('ip_prefix = ' + (ConvertTo-TomlString $Net.Prefix))
+        $L.Add("prefix_length = $([int]$Net.PrefixLength)")
+        $L.Add('gateway = ' + (ConvertTo-TomlString $Net.Gateway))
+        $L.Add('dns = ' + (ConvertTo-TomlString $Net.Dns))
+        $L.Add('ip_range = [10, 99]')
+        $L.Add('snapshot = "clean"')
+        $L.Add('linked = true')
+        if ($Cf) {
+            $L.Add('vnet_id = ' + (ConvertTo-TomlString $Cf.VnetId))
+            $L.Add('rdp_client_host = ' + (ConvertTo-TomlString $Config.RdpClientHost))
+            $L.Add('rdp_server_host = ' + (ConvertTo-TomlString $Config.RdpServerHost))
+        }
+        $L.Add('')
+    }
     $L.Add('[driver]')
     $L.Add('type = "vmrun"')
     $L.Add('vmrun_path = ' + (ConvertTo-TomlString $VmrunPath))
@@ -124,7 +143,7 @@ function New-LabPortalToml {
 }
 
 function Install-LabPortal {
-    param($Config, $Vms, $Cf, [string]$RepoRoot, [string]$InstallRoot, [string]$VmrunPath, [string]$TokenFile)
+    param($Config, $Vms, $Cf, [string]$RepoRoot, [string]$InstallRoot, [string]$VmrunPath, [string]$TokenFile, $Net)
     $py = Install-LabPython
     $venv = Join-Path $InstallRoot 'venv'
     if (-not (Test-Path (Join-Path $venv 'Scripts\python.exe'))) {
@@ -139,7 +158,7 @@ function Install-LabPortal {
 
     New-Item -ItemType Directory -Path (Join-Path $InstallRoot 'data') -Force | Out-Null
     $toml = Join-Path $InstallRoot 'portal.toml'
-    $text = New-LabPortalToml -Config $Config -Vms $Vms -Cf $Cf -InstallRoot $InstallRoot -VmrunPath $VmrunPath -TokenFile $TokenFile
+    $text = New-LabPortalToml -Config $Config -Vms $Vms -Cf $Cf -InstallRoot $InstallRoot -VmrunPath $VmrunPath -TokenFile $TokenFile -Net $Net
     [System.IO.File]::WriteAllText($toml, $text, (New-Object System.Text.UTF8Encoding $false))
     & $vpy -c "import tomllib,sys; tomllib.load(open(sys.argv[1],'rb'))" $toml
     if ($LASTEXITCODE -ne 0) { throw "產生的 $toml 格式有問題" }

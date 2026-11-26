@@ -262,6 +262,18 @@ AP 和 SQL 還沒裝之前 8080、1433 不會通，喚醒會等到逾時（15 �
 
 ## 8. 新增 VM 或銀行
 
+### 8.1 從 Portal 網頁新增（建議）
+
+SA 在 Portal 下方「新增主機」填名稱（例如 `cli-03`）、類型、銀行（可以順便新增銀行）、要檢查的 port，按「建立」。
+
+- 會從同類型範本 VM（第一台 client / server）的 `clean` 快照用 linked clone 複製，自動設下一個可用 IP 和電腦名稱，建好 Cloudflare RDP 目標並加進瀏覽器 RDP 應用程式，最後關機待命。大約 5–15 分鐘，進度在表格裡
+- 範本 VM 裡要有 VMware Tools（腳本靠它在 VM 裡改 IP）
+- linked clone 依賴範本的快照：**不要刪掉範本 VM 或它的 `clean` 快照**
+- 新增的主機記在 `C:\TestLab\data\extra.json`，重跑 deploy.ps1 會一起保留
+- 複製出來的 VM 是範本 `clean` 快照當下的狀態。想讓新主機直接帶著 AP / SQL：在範本裝好後拍一個新名稱的快照（例如 `with-ap`），再把 `deploy\lib` 產生的 `C:\TestLab\portal.toml` 裡 `[provision] snapshot` 改成它（重跑部署會改回 `clean`）
+
+### 8.2 用設定檔新增
+
 1. 編輯 `deploy\lab.config.psd1`：
    - 新銀行：在 `Banks` 加一行 `@{ Id = 'demo-b'; Name = '示範銀行 B' }`
    - 新 VM：在 `VMs` 加一行，`Name` 最多 15 字元、`IpSuffix` 不重複；server 要填 `Bank`

@@ -16,6 +16,7 @@ from .auth import Authenticator
 from .config import SERVER_ROLES, Config, User, load_config_file
 from .db import DB
 from .drivers import VMDriver, create_driver
+from .provision import Provisioner
 from .service import Portal, PortalError
 
 log = logging.getLogger("portal")
@@ -25,6 +26,14 @@ STATIC = Path(__file__).parent / "static"
 class WakeIn(BaseModel):
     bank: str
     kind: str = "client"
+
+
+class ProvisionIn(BaseModel):
+    name: str
+    kind: str = "client"
+    bank: str | None = None
+    new_bank_name: str | None = None
+    ports: list[int] = [3389]
 
 
 class ExtendIn(BaseModel):
@@ -86,6 +95,7 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
     driver = driver or create_driver(cfg.driver)
     db = db or DB(cfg.portal.get("db_path", "data/portal.db"))
     portal = Portal(cfg, driver, db, clock)
+    provisioner = Provisioner(portal)
     auth = authenticator or Authenticator(cfg)
     auth.lookup = portal.users.get  # 使用者名單以資料庫為準
 
@@ -101,6 +111,7 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
 
     app = FastAPI(title="Test-Lab Portal", lifespan=lifespan)
     app.state.portal = portal
+    app.state.provisioner = provisioner
     app.state.auth = auth
 
     @app.exception_handler(PortalError)
@@ -260,6 +271,14 @@ def create_app(cfg: Config, driver: VMDriver | None = None, db: DB | None = None
     @app.put("/api/prewarm")
     def put_prewarm(body: dict[str, Any], user: User = Depends(current_user)):
         return portal.update_prewarm(user, body)
+
+    @app.get("/api/provision")
+    def provision_info(user: User = Depends(require("SA"))):
+        return provisioner.info()
+
+    @app.post("/api/provision")
+    def provision(body: ProvisionIn, user: User = Depends(require("SA"))):
+        return provisioner.request(user.email, body.name, body.kind, body.bank, body.new_bank_name, body.ports)
 
     @app.post("/api/reconcile")
     def reconcile(user: User = Depends(require("SA"))):

@@ -86,18 +86,17 @@ class VmrunDriver(VMDriver):
         self._run("stop", self._vmx(vm), "soft")
         self._invalidate()
 
-    def set_guest_password(self, vm: VMSpec, admin_user: str, admin_password: str,
-                           user: str, new_password: str) -> None:
-        # 密碼用 base64 帶進去，避免引號、符號在命令列被吃掉；需要 VM 裡有 VMware Tools
-        pw = base64.b64encode(new_password.encode("utf-8")).decode()
-        script = (
-            f"$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pw}'));"
-            f"Set-LocalUser -Name '{user}' -Password (ConvertTo-SecureString $p -AsPlainText -Force)"
-        )
+    def run_in_guest(self, vm: VMSpec, user: str, password: str, script: str,
+                     timeout: float = 300) -> None:
         enc = base64.b64encode(script.encode("utf-16-le")).decode()
-        cmd_auth = ["-gu", admin_user, "-gp", admin_password]
-        self._run(*cmd_auth, "runProgramInGuest", self._vmx(vm), POWERSHELL,
-                  f"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}", timeout=60)
+        self._run("-gu", user, "-gp", password, "runProgramInGuest", self._vmx(vm), POWERSHELL,
+                  f"-NoProfile -ExecutionPolicy Bypass -EncodedCommand {enc}", timeout=timeout)
+
+    def clone(self, src: VMSpec, snapshot: str, dst_path: str, name: str, linked: bool = True) -> str:
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        self._run("clone", self._vmx(src), dst_path, "linked" if linked else "full",
+                  f"-snapshot={snapshot}", f"-cloneName={name}", timeout=3600)
+        return dst_path
 
     def status(self, vm: VMSpec) -> PowerState:
         try:

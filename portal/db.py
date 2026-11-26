@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS access_requests (
     decision_note TEXT
 );
 
+CREATE TABLE IF NOT EXISTS provision_jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    bank        TEXT,
+    bank_name   TEXT,                   -- 有值表示同時新增這家銀行
+    ports       TEXT NOT NULL,
+    ip          TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    status      TEXT NOT NULL,          -- queued | running | done | failed
+    step        TEXT,
+    error       TEXT,
+    created_at  TEXT NOT NULL,
+    finished_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL
