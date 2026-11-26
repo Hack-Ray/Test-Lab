@@ -98,16 +98,45 @@ function Get-LabCfTeamDomain([string]$AccountId) {
 }
 
 # ---- Tunnel ----------------------------------------------------------------------
+function Find-LabCloudflared {
+    $cands = @(
+        "${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe",
+        "$env:ProgramFiles\cloudflared\cloudflared.exe",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cloudflared.exe"
+    )
+    $cmd = Get-Command cloudflared.exe -ErrorAction SilentlyContinue
+    if ($cmd) { $cands += $cmd.Source }
+    $pkg = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path $pkg) {
+        $cands += @(Get-ChildItem $pkg -Filter cloudflared*.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    }
+    return $cands | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+}
+
 function Install-LabCloudflared {
-    $exe = @("${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe", "$env:ProgramFiles\cloudflared\cloudflared.exe") |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
+    $exe = Find-LabCloudflared
     if (-not $exe) {
         Write-Info '用 winget 安裝 cloudflared…'
-        [void](Invoke-LabWinget 'Cloudflare.cloudflared')
-        $exe = @("${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe", "$env:ProgramFiles\cloudflared\cloudflared.exe") |
-            Where-Object { Test-Path $_ } | Select-Object -First 1
+        try { [void](Invoke-LabWinget 'Cloudflare.cloudflared') } catch { Write-Note $_ }
+        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        $exe = Find-LabCloudflared
     }
-    if (-not $exe) { throw '安裝 cloudflared 失敗，請手動從 https://github.com/cloudflare/cloudflared/releases 安裝 MSI 後重跑' }
+    if (-not $exe) {
+        # winget 不在或失敗（系統管理員視窗常找不到 winget），直接下載官方 MSI
+        Write-Info '改從 GitHub 下載 cloudflared MSI 安裝…'
+        $msi = Join-Path $env:TEMP 'cloudflared-windows-amd64.msi'
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            $old = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi' -OutFile $msi -UseBasicParsing
+            $ProgressPreference = $old
+            $p = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait -PassThru
+            if ($p.ExitCode -ne 0) { Write-Note "msiexec 結束代碼 $($p.ExitCode)" }
+        } catch { Write-Note $_ }
+        $exe = Find-LabCloudflared
+    }
+    if (-not $exe) { throw '安裝 cloudflared 失敗，請手動從 https://github.com/cloudflare/cloudflared/releases 下載 cloudflared-windows-amd64.msi 安裝後重跑' }
+    Write-Ok "cloudflared：$exe"
     return $exe
 }
 
