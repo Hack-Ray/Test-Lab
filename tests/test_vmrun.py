@@ -9,7 +9,7 @@ VM = VMSpec(name="cli-01", kind="client", vmx=r"D:\VMs\cli-01\cli-01.vmx")
 
 
 def fake_run(running: list[str], log: list[list[str]]):
-    def run(cmd, capture_output, text, timeout):
+    def run(cmd, capture_output, text, timeout, **kwargs):
         log.append(cmd)
         sub = cmd[3]
         if sub == "list":

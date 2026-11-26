@@ -137,9 +137,11 @@ function Install-LabPortal {
 
     # 用目前使用者「登入時」啟動：VMware Workstation 的 VM 屬於這個使用者，vmrun 要用同一個帳號跑
     $log = Join-Path $InstallRoot 'data\portal.log'
-    $cmd = "& '$vpy' -m portal --config '$toml' *>> '$log'"
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$cmd`"" -WorkingDirectory $RepoRoot
+    # 用 pythonw.exe 跑：沒有主控台，不會留下空白視窗（Windows Terminal 會忽略 -WindowStyle Hidden）
+    $vpyw = Join-Path (Split-Path $vpy) 'pythonw.exe'
+    if (-not (Test-Path $vpyw)) { $vpyw = $vpy }
+    $action = New-ScheduledTaskAction -Execute $vpyw `
+        -Argument "-m portal --config `"$toml`" --log-file `"$log`"" -WorkingDirectory $RepoRoot
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable

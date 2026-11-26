@@ -39,7 +39,9 @@ class VmrunDriver(VMDriver):
         cmd = [self.vmrun_path, "-T", self.host_type, *args]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True,
-                                  timeout=timeout or self.timeout)
+                                  timeout=timeout or self.timeout,
+                                  stdin=subprocess.DEVNULL,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except FileNotFoundError as e:
             raise DriverError(f"找不到 vmrun：{self.vmrun_path}") from e
         except subprocess.TimeoutExpired as e:
