@@ -111,6 +111,19 @@ Describe '無人值守安裝檔' {
         $vmx | Should -Match 'sata0:2.fileName = "C:\\vm\\setup.iso"'
     }
 
+    It '沒有 Tools 光碟時不掛 sata0:3' {
+        $vm = @{ Name = 'cli-01'; MemoryMB = 4096; Cpus = 2 }
+        $vmx = New-LabVmx -Vm $vm -DiskFile 'd.vmdk' -WindowsIso 'w' -SetupIso 's' -ToolsIso $null
+        $vmx | Should -Not -Match 'sata0:3'
+        $vmx | Should -Match 'sata0:2.fileName = "s"'
+    }
+
+    It 'Tools 光碟已存在就直接用' {
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) 'labtools.iso'
+        Set-Content $tmp 'x'
+        Get-LabToolsIso ([pscustomobject]@{ ToolsIso = $tmp }) 'C:\nowhere' | Should -Be $tmp
+    }
+
     It '安裝完拿掉光碟' {
         $tmp = Join-Path ([IO.Path]::GetTempPath()) 'labtest.vmx'
         $vm = @{ Name = 'cli-01'; MemoryMB = 4096; Cpus = 2 }

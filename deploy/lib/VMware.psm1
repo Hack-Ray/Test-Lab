@@ -75,6 +75,32 @@ function Get-LabWindowsIso([string]$Url, [string]$Path) {
     Write-Ok "ISO：$Path"
 }
 
+# ---- VMware Tools 光碟 --------------------------------------------------------
+function Get-LabToolsIso($VMware, [string]$IsoDir) {
+    <#
+      VMware Workstation 17.6 起安裝目錄不再附 windows.iso（VMware Tools），
+      找不到就從 packages.vmware.com 下載；下載失敗就不掛 Tools 光碟（VM 照樣能裝，只是少了 Tools）。
+    #>
+    if ($VMware.ToolsIso -and (Test-Path $VMware.ToolsIso)) { return $VMware.ToolsIso }
+    $cached = Join-Path $IsoDir 'vmware-tools-windows.iso'
+    if ((Test-Path $cached) -and (Get-Item $cached).Length -gt 10MB) { return $cached }
+    $base = 'https://packages.vmware.com/tools/releases/latest/windows/'
+    try {
+        Write-Info '這版 VMware 沒附 VMware Tools 光碟，從 packages.vmware.com 下載…'
+        $index = Invoke-WebRequest -Uri $base -UseBasicParsing
+        $name = ([regex]::Matches($index.Content, 'VMware-tools-windows-[0-9][0-9A-Za-z\.\-]*\.iso') |
+            ForEach-Object Value | Sort-Object -Unique | Select-Object -Last 1)
+        if (-not $name) { throw '找不到 ISO 檔名' }
+        New-Item -ItemType Directory -Path $IsoDir -Force | Out-Null
+        Start-BitsTransfer -Source ($base + $name) -Destination $cached -ErrorAction Stop
+        Write-Ok "VMware Tools：$cached"
+        return $cached
+    } catch {
+        Write-Note "下載 VMware Tools 失敗（$_），先不裝 Tools，VM 照樣會建好"
+        return $null
+    }
+}
+
 # ---- 產生無人值守檔與設定光碟 ------------------------------------------------
 function ConvertTo-XmlText([string]$s) { return [System.Security.SecurityElement]::Escape($s) }
 
@@ -244,9 +270,6 @@ function New-LabVmx {
         'sata0:2.present = "TRUE"'
         'sata0:2.deviceType = "cdrom-image"'
         "sata0:2.fileName = `"$SetupIso`""
-        'sata0:3.present = "TRUE"'
-        'sata0:3.deviceType = "cdrom-image"'
-        "sata0:3.fileName = `"$ToolsIso`""
         'bios.bootOrder = "hdd,cdrom"'
         'ethernet0.present = "TRUE"'
         'ethernet0.connectionType = "nat"'
@@ -259,6 +282,14 @@ function New-LabVmx {
         'tools.upgrade.policy = "manual"'
         'msg.autoAnswer = "TRUE"'
     )
+    if ($ToolsIso) {
+        # 只有檔案確定存在才掛：找不到檔案時 VMware 會跳視窗詢問，背景（nogui）開機就會被取消
+        $lines += @(
+            'sata0:3.present = "TRUE"'
+            'sata0:3.deviceType = "cdrom-image"'
+            "sata0:3.fileName = `"$ToolsIso`""
+        )
+    }
     return ($lines -join "`r`n") + "`r`n"
 }
 
@@ -321,10 +352,19 @@ function New-LabVm {
     Remove-Item $stage -Recurse -Force
 
     New-LabVmx -Vm $Vm -DiskFile (Split-Path $disk -Leaf) -WindowsIso $Config.IsoPath `
-        -SetupIso $setupIso -ToolsIso $VMware.ToolsIso | ForEach-Object { Write-LabTextNoBom $vmx $_ }
+        -SetupIso $setupIso -ToolsIso (Get-LabToolsIso $VMware (Split-Path $Config.IsoPath)) |
+        ForEach-Object { Write-LabTextNoBom $vmx $_ }
 
     Write-Info '開機並開始無人值守安裝（大約 20–40 分鐘）…'
-    if (-not (Test-LabVmRunning $VMware $vmx)) { Invoke-LabVmrun $VMware @('start', $vmx, 'nogui') | Out-Null }
+    if (-not (Test-LabVmRunning $VMware $vmx)) {
+        try { Invoke-LabVmrun $VMware @('start', $vmx, 'nogui') | Out-Null }
+        catch {
+            throw ("$($Vm.Name) 開機失敗：$_`n" +
+                "  常見原因：(1) VMware Workstation 從沒打開過，授權視窗還沒按（請打開一次，選個人使用）；`n" +
+                "  (2) VMware 跳出詢問視窗。請打開 VMware → File → Open → $vmx → Power on，看跳出什麼訊息。`n" +
+                "  處理完關掉那台 VM，再重跑 deploy.ps1。")
+        }
+    }
     if (-not (Wait-LabTcp $ip 3389 90 "$($Vm.Name) 安裝完成")) {
         throw "$($Vm.Name) 90 分鐘內沒有完成安裝。請在 VMware 打開這台 VM 看畫面卡在哪裡，處理後重跑 deploy.ps1。"
     }
@@ -333,7 +373,8 @@ function New-LabVm {
     if (-not (Wait-LabTcp $ip 3389 20 "$($Vm.Name) 重開機")) { throw "$($Vm.Name) 重開機後連不上 3389" }
 
     Write-Info '關機、拿掉安裝光碟、建立 clean 快照…'
-    Invoke-LabVmrun $VMware @('stop', $vmx, 'soft') | Out-Null
+    try { Invoke-LabVmrun $VMware @('stop', $vmx, 'soft') | Out-Null }
+    catch { Invoke-LabVmrun $VMware @('stop', $vmx, 'hard') | Out-Null }   # 沒有 VMware Tools 時 soft 會失敗
     $deadline = (Get-Date).AddMinutes(10)
     while ((Test-LabVmRunning $VMware $vmx) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
     Remove-LabInstallMedia $vmx
