@@ -330,30 +330,35 @@ function New-LabVm {
     if ($done -and (Test-Path $vmx)) { Write-Ok "$($Vm.Name) 已建好（$ip）"; return $done }
 
     Write-Step "建立 VM：$($Vm.Name)（$ip）"
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    $disk = Join-Path $dir "$($Vm.Name).vmdk"
-    if (-not (Test-Path $disk)) {
-        & $VMware.VDiskManager -c -s "$($Vm.DiskGB)GB" -a lsilogic -t 0 $disk | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "建立虛擬硬碟失敗：$disk" }
-    }
-
-    # 設定光碟：autounattend.xml + setup-guest.ps1 + idle-shutdown.ps1 + guest-config.json
-    $stage = Join-Path $dir 'setup-media'
-    New-Item -ItemType Directory -Path $stage -Force | Out-Null
-    New-LabUnattendXml -ComputerName $Vm.Name.ToUpper() -AdminPassword $Secrets.AdminPassword `
-        -ImageIndex $Config.ImageIndex -TimeZone $Config.TimeZone |
-        Set-Content -Path (Join-Path $stage 'autounattend.xml') -Encoding UTF8
-    Copy-Item (Join-Path $RepoRoot 'deploy\guest\setup-guest.ps1') $stage -Force
-    Copy-Item (Join-Path $RepoRoot 'deploy\guest\idle-shutdown.ps1') $stage -Force
-    New-LabGuestConfig -Vm $Vm -Net $Net -Config $Config -Secrets $Secrets |
-        ConvertTo-Json | Set-Content -Path (Join-Path $stage 'guest-config.json') -Encoding UTF8
+    # 已經在跑（例如上次中斷後、或手動在 VMware 介面開機安裝中）：不要重做設定光碟和 vmx，直接等安裝完成
+    $alreadyRunning = (Test-Path $vmx) -and (Test-LabVmRunning $VMware $vmx)
     $setupIso = Join-Path $dir 'setup.iso'
-    New-LabIso -SourceDir $stage -IsoPath $setupIso
-    Remove-Item $stage -Recurse -Force
+    if ($alreadyRunning) { Write-Info "$($Vm.Name) 已經在開機中，直接等安裝完成" } else {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $disk = Join-Path $dir "$($Vm.Name).vmdk"
+        if (-not (Test-Path $disk)) {
+            & $VMware.VDiskManager -c -s "$($Vm.DiskGB)GB" -a lsilogic -t 0 $disk | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "建立虛擬硬碟失敗：$disk" }
+        }
 
-    New-LabVmx -Vm $Vm -DiskFile (Split-Path $disk -Leaf) -WindowsIso $Config.IsoPath `
-        -SetupIso $setupIso -ToolsIso (Get-LabToolsIso $VMware (Split-Path $Config.IsoPath)) |
-        ForEach-Object { Write-LabTextNoBom $vmx $_ }
+        # 設定光碟：autounattend.xml + setup-guest.ps1 + idle-shutdown.ps1 + guest-config.json
+        $stage = Join-Path $dir 'setup-media'
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        New-LabUnattendXml -ComputerName $Vm.Name.ToUpper() -AdminPassword $Secrets.AdminPassword `
+            -ImageIndex $Config.ImageIndex -TimeZone $Config.TimeZone |
+            Set-Content -Path (Join-Path $stage 'autounattend.xml') -Encoding UTF8
+        Copy-Item (Join-Path $RepoRoot 'deploy\guest\setup-guest.ps1') $stage -Force
+        Copy-Item (Join-Path $RepoRoot 'deploy\guest\idle-shutdown.ps1') $stage -Force
+        New-LabGuestConfig -Vm $Vm -Net $Net -Config $Config -Secrets $Secrets |
+            ConvertTo-Json | Set-Content -Path (Join-Path $stage 'guest-config.json') -Encoding UTF8
+        New-LabIso -SourceDir $stage -IsoPath $setupIso
+        Remove-Item $stage -Recurse -Force
+
+        New-LabVmx -Vm $Vm -DiskFile (Split-Path $disk -Leaf) -WindowsIso $Config.IsoPath `
+            -SetupIso $setupIso -ToolsIso (Get-LabToolsIso $VMware (Split-Path $Config.IsoPath)) |
+            ForEach-Object { Write-LabTextNoBom $vmx $_ }
+
+    }
 
     Write-Info '開機並開始無人值守安裝（大約 20–40 分鐘）…'
     if (-not (Test-LabVmRunning $VMware $vmx)) {
