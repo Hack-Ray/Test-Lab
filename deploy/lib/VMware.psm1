@@ -259,6 +259,24 @@ function New-LabVmx {
         'firmware = "bios"'
         "memsize = `"$($Vm.MemoryMB)`""
         "numvcpus = `"$($Vm.Cpus)`""
+        # PCI / PCIe 橋接：沒有這些，SCSI、SATA、e1000e 等 PCIe 裝置會找不到插槽
+        # （VMware 會報 "No PCIe slot available for SCSI0"）
+        'pciBridge0.present = "TRUE"'
+        'pciBridge4.present = "TRUE"'
+        'pciBridge4.virtualDev = "pcieRootPort"'
+        'pciBridge4.functions = "8"'
+        'pciBridge5.present = "TRUE"'
+        'pciBridge5.virtualDev = "pcieRootPort"'
+        'pciBridge5.functions = "8"'
+        'pciBridge6.present = "TRUE"'
+        'pciBridge6.virtualDev = "pcieRootPort"'
+        'pciBridge6.functions = "8"'
+        'pciBridge7.present = "TRUE"'
+        'pciBridge7.virtualDev = "pcieRootPort"'
+        'pciBridge7.functions = "8"'
+        'vmci0.present = "TRUE"'
+        'hpet0.present = "TRUE"'
+        'floppy0.present = "FALSE"'
         'scsi0.present = "TRUE"'
         'scsi0.virtualDev = "lsisas1068"'
         'scsi0:0.present = "TRUE"'

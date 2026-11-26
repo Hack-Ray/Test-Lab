@@ -108,6 +108,9 @@ Describe '無人值守安裝檔' {
         $vmx = New-LabVmx -Vm $vm -DiskFile 'cli-01.vmdk' -WindowsIso 'C:\iso\w.iso' -SetupIso 'C:\vm\setup.iso' -ToolsIso 'C:\vmw\windows.iso'
         $vmx | Should -Match 'firmware = "bios"'
         $vmx | Should -Match 'ethernet0.connectionType = "nat"'
+        $vmx | Should -Match 'pciBridge4.virtualDev = "pcieRootPort"'
+        $vmx | Should -Match 'pciBridge7.functions = "8"'
+        $vmx | Should -Match 'floppy0.present = "FALSE"'
         $vmx | Should -Match 'sata0:2.fileName = "C:\\vm\\setup.iso"'
     }
 
