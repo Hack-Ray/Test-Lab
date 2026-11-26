@@ -116,14 +116,8 @@ function Find-LabCloudflared {
 function Install-LabCloudflared {
     $exe = Find-LabCloudflared
     if (-not $exe) {
-        Write-Info '用 winget 安裝 cloudflared…'
-        try { [void](Invoke-LabWinget 'Cloudflare.cloudflared') } catch { Write-Note $_ }
-        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-        $exe = Find-LabCloudflared
-    }
-    if (-not $exe) {
-        # winget 不在或失敗（系統管理員視窗常找不到 winget），直接下載官方 MSI
-        Write-Info '改從 GitHub 下載 cloudflared MSI 安裝…'
+        # 直接下載官方 MSI 安裝（不走 winget：系統管理員視窗常找不到 winget）
+        Write-Info '從 GitHub 下載 cloudflared MSI 安裝…'
         $msi = Join-Path $env:TEMP 'cloudflared-windows-amd64.msi'
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
