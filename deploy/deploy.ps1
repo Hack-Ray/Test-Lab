@@ -109,6 +109,12 @@ if (Should-Run 'VMs') {
     Write-Info '跳過'
 }
 
+# 健康檢查的 port 以設定檔為準（VM 建好後也能改，例如 AP / SQL 還沒裝時先只檢查 3389）
+foreach ($v in $Vms) {
+    $c = $Config.VMs | Where-Object { $_.Name -eq $v.Name } | Select-Object -First 1
+    if ($c) { $v.Ports = @($c.Ports) }
+}
+
 # ---- 3. Cloudflare ---------------------------------------------------------------
 Write-Step '3/4 Cloudflare Tunnel 與 Access'
 $Cf = Get-LabStateValue 'Cloudflare'
